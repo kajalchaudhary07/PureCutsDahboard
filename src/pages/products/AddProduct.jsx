@@ -7,6 +7,7 @@ import {
 } from "../../firestoreService";
 import { getBrands } from "../../firestoreService";
 import { getCategories } from "../../firestoreService";
+import { getSubCategories } from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
 
@@ -15,7 +16,7 @@ const DELIVER = ["15 MINS", "30 MINS", "1 HOUR", "Same Day", "Next Day"];
 
 const empty = {
   name: "", brand: "", category: "", price: "", originalPrice: "",
-  rating: "", reviews: "", image: "", tag: "", size: "",
+  subCategory: "", rating: "", reviews: "", image: "", tag: "", size: "",
   deliveryTime: "15 MINS", isPopular: false, isRecommended: false, stock: "",
 };
 
@@ -27,6 +28,7 @@ export default function AddProduct() {
   const [form, setForm] = useState(empty);
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [subCategories, setSubCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -36,16 +38,30 @@ export default function AddProduct() {
   useEffect(() => {
     getBrands().then(setBrands);
     getCategories().then(setCategories);
+    getSubCategories().then(setSubCategories);
     if (isEdit) {
       getProducts().then((all) => {
         const found = all.find((p) => p.id === id);
         if (found) {
-          setForm({ ...empty, ...found });
-          if (found.image) setImagePreview(found.image);
+          setForm({
+            ...empty,
+            ...found,
+            subCategory: found.subCategory || found.subcategory || found.sub_category || "",
+            image: found.image || found.imageUrl || "",
+          });
+          if (found.image || found.imageUrl) setImagePreview(found.image || found.imageUrl);
         }
       });
     }
   }, [id]);
+
+  useEffect(() => {
+    if (!form.category) return;
+    const selected = subCategories.find((s) => s.name === form.subCategory);
+    if (!selected) {
+      setForm((f) => ({ ...f, subCategory: "" }));
+    }
+  }, [form.category, form.subCategory, subCategories]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -84,12 +100,15 @@ export default function AddProduct() {
       const imageUrl = await uploadImage();
       const data = {
         ...form,
+        subCategory: form.subCategory || "",
+        subcategory: form.subCategory || "",
         price:         Number(form.price)         || 0,
         originalPrice: Number(form.originalPrice) || 0,
         rating:        Number(form.rating)         || 0,
         reviews:       Number(form.reviews)        || 0,
         stock:         Number(form.stock)          || 0,
         image: imageUrl,
+        imageUrl: imageUrl,
       };
       if (isEdit) {
         await updateProduct(id, data);
@@ -196,7 +215,14 @@ export default function AddProduct() {
 
             <div className="form-group">
               <label>Category</label>
-              <select value={form.category} onChange={(e) => set("category", e.target.value)}>
+              <select
+                value={form.category}
+                onChange={(e) => {
+                  const nextCategory = e.target.value;
+                  set("category", nextCategory);
+                  set("subCategory", "");
+                }}
+              >
                 <option value="">Select category…</option>
                 {categories.length > 0
                   ? categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)
@@ -204,6 +230,22 @@ export default function AddProduct() {
                       <option key={c} value={c}>{c}</option>
                     ))
                 }
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Sub Category</label>
+              <select
+                value={form.subCategory}
+                onChange={(e) => set("subCategory", e.target.value)}
+                disabled={!form.category}
+              >
+                <option value="">Select sub category…</option>
+                {subCategories
+                  .filter((s) => !form.category || s.parentCategory === form.category)
+                  .map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
               </select>
             </div>
 
