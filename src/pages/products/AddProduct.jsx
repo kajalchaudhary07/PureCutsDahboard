@@ -8,7 +8,7 @@ import {
 import { getBrands } from "../../firestoreService";
 import { getCategories } from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { storage } from "../../fierbaseconfig";
+import { storage } from "../../firebaseConfig";
 
 const TAGS    = ["", "Bestseller", "Top Rated", "Premium", "Deal", "New"];
 const DELIVER = ["15 MINS", "30 MINS", "1 HOUR", "Same Day", "Next Day"];

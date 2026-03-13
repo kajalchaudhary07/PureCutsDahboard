@@ -5,7 +5,7 @@ import {
   getCategories, addCategory, updateCategory, deleteCategory,
 } from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { storage } from "../../fierbaseconfig";
+import { storage } from "../../firebaseConfig";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const emptyForm = { name: "", image: "", order: "" };

@@ -9,7 +9,7 @@ import {
   query,
   orderBy,
 } from "firebase/firestore";
-import { db } from "./fierbaseconfig";
+import { db } from "./firebaseConfig";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 import { useLocation } from "react-router-dom";
-import { MdNotifications, MdSearch } from "react-icons/md";
+import { useAuth } from "../auth/AuthProvider";
 
 const titles = {
   "/products":       "Products",
@@ -16,6 +16,7 @@ function getTitle(pathname) {
 
 export default function Header() {
   const { pathname } = useLocation();
+  const { user, logout, claims } = useAuth();
   const title = getTitle(pathname);
 
   const parts = pathname.split("/").filter(Boolean);
@@ -37,7 +38,18 @@ export default function Header() {
         </div>
       </div>
       <div className="topbar-right">
-        <div className="avatar">A</div>
+        <div className="topbar-user-meta">
+          <div className="topbar-user-email">{user?.email || "Unknown user"}</div>
+          <div className="topbar-user-role">
+            {claims.superAdmin ? "Super Admin" : claims.admin ? "Admin" : "Staff"}
+          </div>
+        </div>
+        <div className="avatar">
+          {(user?.email || "A").trim().charAt(0).toUpperCase()}
+        </div>
+        <button className="btn btn-outline btn-sm" onClick={logout}>
+          Sign out
+        </button>
       </div>
     </header>
   );
