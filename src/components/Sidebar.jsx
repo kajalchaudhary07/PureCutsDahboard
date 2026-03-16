@@ -1,80 +1,96 @@
-import { useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import {
   MdDashboard,
-  MdInventory2,
-  MdAddBox,
-  MdList,
-  MdBrandingWatermark,
+  MdPermMedia,
   MdCategory,
   MdAccountTree,
-  MdChevronRight,
+  MdBrandingWatermark,
+  MdTune,
+  MdStraighten,
+  MdAddBox,
+  MdInventory2,
+  MdStarBorder,
+  MdPeople,
+  MdShoppingCart,
+  MdRateReview,
+  MdViewCarousel,
+  MdLocalOffer,
+  MdNotificationsNone,
+  MdChatBubbleOutline,
+  MdAdminPanelSettings,
+  MdBadge,
+  MdPerson,
+  MdSettings,
   MdStorefront,
 } from "react-icons/md";
 
-const menuItems = [
+const menuSections = [
   {
-    group: "Main Menu",
+    group: "Overview & Media",
     items: [
-      {
-        label: "Products",
-        icon: <MdInventory2 />,
-        children: [
-          { label: "All Products", path: "/products", icon: <MdList /> },
-          { label: "Add Product",  path: "/products/add", icon: <MdAddBox /> },
-        ],
-      },
-      { label: "Brands",          path: "/brands",        icon: <MdBrandingWatermark /> },
-      { label: "Categories",      path: "/categories",    icon: <MdCategory /> },
-      { label: "Sub Categories",  path: "/subcategories", icon: <MdAccountTree /> },
+      { label: "Dashboard", path: "/dashboard", icon: <MdDashboard /> },
+      { label: "Media", path: "/media", icon: <MdPermMedia /> },
+    ],
+  },
+  {
+    group: "Data Management",
+    items: [
+      { label: "Categories", path: "/categories", icon: <MdCategory /> },
+      { label: "Sub Categories", path: "/subcategories", icon: <MdAccountTree /> },
+      { label: "Brands", path: "/brands", icon: <MdBrandingWatermark /> },
+      { label: "Attributes", path: "/attributes", icon: <MdTune /> },
+      { label: "Units", path: "/units", icon: <MdStraighten /> },
+    ],
+  },
+  {
+    group: "Product Management",
+    items: [
+      { label: "Add new product", path: "/products/add", icon: <MdAddBox /> },
+      { label: "Products", path: "/products", icon: <MdInventory2 />, end: true },
+      { label: "Recommended Products", path: "/products/recommended", icon: <MdStarBorder /> },
+      { label: "Customers", path: "/customers", icon: <MdPeople /> },
+      { label: "Orders", path: "/orders", icon: <MdShoppingCart /> },
+      { label: "Product Reviews", path: "/product-reviews", icon: <MdRateReview /> },
+    ],
+  },
+  {
+    group: "Promotion Management",
+    items: [
+      { label: "Banners", path: "/banners", icon: <MdViewCarousel /> },
+      { label: "Coupons", path: "/coupons", icon: <MdLocalOffer /> },
+    ],
+  },
+  {
+    group: "Notification",
+    items: [{ label: "Notifications", path: "/notifications", icon: <MdNotificationsNone /> }],
+  },
+  {
+    group: "Support Management",
+    items: [{ label: "Chat", path: "/chat", icon: <MdChatBubbleOutline /> }],
+  },
+  {
+    group: "Admin Management",
+    items: [{ label: "Admin", path: "/admin", icon: <MdAdminPanelSettings /> }],
+  },
+  {
+    group: "Role Management",
+    items: [{ label: "Roles", path: "/roles", icon: <MdBadge /> }],
+  },
+  {
+    group: "Configurations",
+    dividerBefore: true,
+    items: [
+      { label: "Profile", path: "/profile", icon: <MdPerson /> },
+      { label: "App Settings", path: "/app-settings", icon: <MdSettings /> },
     ],
   },
 ];
 
-function NavGroup({ item }) {
-  const location = useLocation();
-  const isChildActive = item.children?.some((c) =>
-    location.pathname.startsWith(c.path)
-  );
-  const [open, setOpen] = useState(isChildActive);
-
-  if (item.children) {
-    return (
-      <div className="nav-group">
-        <div
-          className={`nav-item ${isChildActive ? "active" : ""}`}
-          onClick={() => setOpen((o) => !o)}
-        >
-          {item.icon}
-          <span style={{ flex: 1 }}>{item.label}</span>
-          <MdChevronRight
-            className={`nav-expand ${open ? "open" : ""}`}
-          />
-        </div>
-        {open && (
-          <div className="nav-sub">
-            {item.children.map((child) => (
-              <NavLink
-                key={child.path}
-                to={child.path}
-                end
-                className={({ isActive }) =>
-                  `nav-item${isActive ? " active" : ""}`
-                }
-              >
-                {child.icon}
-                {child.label}
-              </NavLink>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
+function NavItem({ item }) {
   return (
     <NavLink
       to={item.path}
+      end={item.end}
       className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
     >
       {item.icon}
@@ -94,11 +110,12 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {menuItems.map((group) => (
-          <div key={group.group}>
+        {menuSections.map((group) => (
+          <div key={group.group} className="nav-group">
+            {group.dividerBefore && <div className="nav-divider" />}
             <div className="nav-group-title">{group.group}</div>
             {group.items.map((item) => (
-              <NavGroup key={item.label} item={item} />
+              <NavItem key={item.label} item={item} />
             ))}
           </div>
         ))}

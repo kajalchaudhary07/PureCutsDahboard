@@ -1,0 +1,9 @@
+{
+    "github.copilot.chat.anthropic.toolSearchTool.enabled": true,
+    "github.copilot.chat.backgroundCompaction": true,
+    "github.copilot.chat.codesearch.enabled": true,
+    "github.copilot.chat.alternateGeminiModelFPrompt.enabled": true,
+    "github.copilot.chat.anthropic.tools.websearch.blockedDomains": [
+        ""
+    ]
+}

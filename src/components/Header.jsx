@@ -2,11 +2,27 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
 const titles = {
+  "/dashboard":      "Dashboard",
+  "/media":          "Media",
   "/products":       "Products",
   "/products/add":   "Add Product",
+  "/products/recommended": "Recommended Products",
   "/brands":         "Brands",
   "/categories":     "Categories",
   "/subcategories":  "Sub Categories",
+  "/attributes":     "Attributes",
+  "/units":          "Units",
+  "/customers":      "Customers",
+  "/orders":         "Orders",
+  "/product-reviews": "Product Reviews",
+  "/banners":        "Banners",
+  "/coupons":        "Coupons",
+  "/notifications":  "Notifications",
+  "/chat":           "Chat",
+  "/admin":          "Admin",
+  "/roles":          "Roles",
+  "/profile":        "Profile",
+  "/app-settings":   "App Settings",
 };
 
 function getTitle(pathname) {
