@@ -9,6 +9,8 @@ import AddProduct from "./pages/products/AddProduct";
 import BrandsList from "./pages/brands/BrandsList";
 import CategoriesList from "./pages/categories/CategoriesList";
 import SubCategoriesList from "./pages/subcategories/SubCategoriesList";
+import AttributesList from "./pages/attributes/AttributesList";
+import CreateAttribute from "./pages/attributes/CreateAttribute";
 import PlaceholderPage from "./pages/PlaceholderPage";
 
 export default function App() {
@@ -31,7 +33,9 @@ export default function App() {
               <Route path="brands" element={<BrandsList />} />
               <Route path="categories" element={<CategoriesList />} />
               <Route path="subcategories" element={<SubCategoriesList />} />
-              <Route path="attributes" element={<PlaceholderPage title="Attributes" />} />
+              <Route path="attributes" element={<AttributesList />} />
+              <Route path="attributes/create" element={<CreateAttribute />} />
+              <Route path="attributes/edit/:id" element={<CreateAttribute />} />
               <Route path="units" element={<PlaceholderPage title="Units" />} />
               <Route path="customers" element={<PlaceholderPage title="Customers" />} />
               <Route path="orders" element={<PlaceholderPage title="Orders" />} />

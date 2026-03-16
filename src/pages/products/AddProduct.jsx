@@ -16,11 +16,17 @@ import {
   MdInventory,
 } from "react-icons/md";
 import {
-  getProducts, addProduct, updateProduct,
+  getProducts, updateProduct, createProduct,
 } from "../../firestoreService";
 import { getBrands, addBrand } from "../../firestoreService";
 import { getCategories, addCategory } from "../../firestoreService";
-import { getSubCategories } from "../../firestoreService";
+import {
+  getSubCategories,
+  createVariant,
+  getProductVariants,
+  deleteProductVariant,
+  getAttributes,
+} from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
 
@@ -28,8 +34,13 @@ const empty = {
   name: "", brand: "", category: "", price: "", originalPrice: "",
   subCategory: "", rating: "", reviews: "", image: "", tag: "", size: "",
   deliveryTime: "15 MINS", isPopular: false, isRecommended: false, stock: "",
+  showInStartFirstOrder: false,
+  showInRecommendedSalon: false,
+  showInMostBought: false,
+  showInPopularProducts: false,
   description: "",
   shortDescription: "",
+  howToUse: "",
   sku: "",
   productType: "single",
   visibility: "publish",
@@ -42,8 +53,6 @@ const empty = {
   salePrice: "",
   variableOptions: "",
 };
-
-const ATTRIBUTE_OPTIONS = ["Sizes", "Color", "Material", "Weight", "Volume"];
 
 export default function AddProduct() {
   const { id } = useParams();
@@ -61,16 +70,39 @@ export default function AddProduct() {
   const [additionalImageFiles, setAdditionalImageFiles] = useState([]);
   const [descriptionMediaFiles, setDescriptionMediaFiles] = useState([]);
   const [shortDescriptionMediaFiles, setShortDescriptionMediaFiles] = useState([]);
-  const [selectedAttribute, setSelectedAttribute] = useState("");
-  const [customAttributeName, setCustomAttributeName] = useState("");
+  const [globalAttributes, setGlobalAttributes] = useState([]);
+  const [selectedGlobalAttr, setSelectedGlobalAttr] = useState(null);
+  const [chosenAttrValues, setChosenAttrValues] = useState([]);
   const [tagInput, setTagInput] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryParent, setNewCategoryParent] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
+  const [variantRows, setVariantRows] = useState([]);
+  const [existingVariantIds, setExistingVariantIds] = useState([]);
   const fileRef = useRef();
   const additionalRef = useRef();
   const descriptionMediaRef = useRef();
   const shortMediaRef = useRef();
+
+  const normalizeAttr = (value) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+
+  const normalizeSectionKey = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+
+  useEffect(() => {
+    getAttributes().then(setGlobalAttributes).catch(() => setGlobalAttributes([]));
+  }, []);
 
   useEffect(() => {
     getBrands().then(setBrands);
@@ -80,6 +112,18 @@ export default function AddProduct() {
       getProducts().then((all) => {
         const found = all.find((p) => p.id === id);
         if (found) {
+          const legacySections = [
+            ...(Array.isArray(found.homeSections) ? found.homeSections : []),
+            found.homeSection,
+            found.home_section,
+            found.section,
+            found.tag,
+          ]
+            .map(normalizeSectionKey)
+            .filter(Boolean);
+          const hasLegacy = (aliases) =>
+            aliases.some((a) => legacySections.includes(normalizeSectionKey(a)));
+
           const existingTags = Array.isArray(found.tags)
             ? found.tags
             : typeof found.tags === "string"
@@ -98,7 +142,13 @@ export default function AddProduct() {
             tags: existingTags,
             attributes: existingAttributes,
             additionalImages: existingAdditional,
-            shortDescription: found.shortDescription || "",
+            shortDescription: found.highlights || found.shortDescription || "",
+            howToUse:
+              found.howToUse ||
+              found.how_to_use ||
+              found.usage ||
+              found.instructions ||
+              "",
             selectedCategories: Array.isArray(found.selectedCategories)
               ? found.selectedCategories
               : found.category
@@ -108,8 +158,33 @@ export default function AddProduct() {
             onSale: Boolean(found.onSale),
             salePrice: found.salePrice || "",
             variableOptions: found.variableOptions || "",
+            showInStartFirstOrder: Boolean(found.showInStartFirstOrder || hasLegacy(["start_first_order"])),
+            showInRecommendedSalon: Boolean(found.showInRecommendedSalon || found.isRecommended || hasLegacy(["recommended_salon", "recommended"])),
+            showInMostBought: Boolean(found.showInMostBought || hasLegacy(["most_bought", "most_bought_products", "bestseller"])),
+            showInPopularProducts: Boolean(found.showInPopularProducts || found.isPopular || hasLegacy(["popular_products", "popular"])),
           });
           if (found.image || found.imageUrl) setImagePreview(found.image || found.imageUrl);
+
+          getProductVariants(found.id).then((variants) => {
+            const mapped = variants.map((v) => ({
+              variantDocId: v.id,
+              variantKey: makeVariantId(v.attribute || "variant", v.value || ""),
+              attribute: (v.attribute || "variant").toString(),
+              value: (v.value || "").toString(),
+              sku: (v.sku || "").toString(),
+              price: (v.price ?? "").toString(),
+              regularPrice: (v.regularPrice ?? "").toString(),
+              salePrice: (v.salePrice ?? "").toString(),
+              stock: (v.stock ?? "").toString(),
+              colorCode: (v.colorCode || "").toString(),
+              image: (v.image || "").toString(),
+            }));
+            setVariantRows(mapped);
+            setExistingVariantIds(mapped.map((v) => v.variantDocId).filter(Boolean));
+          }).catch(() => {
+            setVariantRows([]);
+            setExistingVariantIds([]);
+          });
         }
       });
     }
@@ -122,6 +197,17 @@ export default function AddProduct() {
       setForm((f) => ({ ...f, subCategory: "" }));
     }
   }, [form.category, form.subCategory, subCategories]);
+
+  useEffect(() => {
+    setVariantRows((prev) => deriveVariantRows(prev));
+  }, [
+    form.productType,
+    form.attributes,
+    form.price,
+    form.originalPrice,
+    form.salePrice,
+    form.stock,
+  ]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -226,7 +312,9 @@ export default function AddProduct() {
       setTagInput("");
       return;
     }
-    set("tags", [...form.tags, value]);
+    const next = [...form.tags, value];
+    set("tags", next);
+    set("tag", next[0] || "");
     setTagInput("");
   };
 
@@ -329,26 +417,24 @@ export default function AddProduct() {
     return Promise.all(uploads);
   };
 
-  const addAttribute = () => {
-    const name = (customAttributeName.trim() || selectedAttribute).trim();
-    if (!name) return;
-    if (form.attributes.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
-      setCustomAttributeName("");
-      setSelectedAttribute("");
+  const addAttributeFromGlobal = () => {
+    if (!selectedGlobalAttr) { toast.warning("Select an attribute first"); return; }
+    if (form.attributes.some((a) => a.name.toLowerCase() === selectedGlobalAttr.name.toLowerCase())) {
+      toast.warning(`${selectedGlobalAttr.name} is already added`);
       return;
     }
-
-    set("attributes", [...form.attributes, { name, values: [], useForVariations: true }]);
-    setCustomAttributeName("");
-    setSelectedAttribute("");
-  };
-
-  const updateAttributeValues = (name, raw) => {
-    const values = raw.split(",").map((v) => v.trim()).filter(Boolean);
-    set(
-      "attributes",
-      form.attributes.map((attr) => (attr.name === name ? { ...attr, values } : attr))
-    );
+    const valuesToAdd = chosenAttrValues.length > 0 ? chosenAttrValues : (selectedGlobalAttr.values || []);
+    set("attributes", [
+      ...form.attributes,
+      {
+        name: selectedGlobalAttr.name,
+        isColorField: selectedGlobalAttr.isColorField || false,
+        values: valuesToAdd,
+        useForVariations: true,
+      },
+    ]);
+    setSelectedGlobalAttr(null);
+    setChosenAttrValues([]);
   };
 
   const toggleAttributeVariation = (name, checked) => {
@@ -364,10 +450,80 @@ export default function AddProduct() {
     set("attributes", form.attributes.filter((attr) => attr.name !== name));
   };
 
+  const variationAttribute = form.attributes.find((a) => a.useForVariations !== false);
+  const variationAttributeName = variationAttribute?.name || "";
+  const variationValues = Array.isArray(variationAttribute?.values)
+    ? variationAttribute.values.filter((v) => String(v).trim())
+    : [];
+
+  const makeVariantId = (attributeName, value) => `${normalizeAttr(attributeName)}::${normalizeAttr(value)}`;
+
+  const deriveVariantRows = (prevRows = []) => {
+    if (form.productType !== "variable" || !variationAttributeName || variationValues.length === 0) {
+      return [];
+    }
+
+    return variationValues.map((rawValue) => {
+      const value = String(rawValue).trim();
+      const variantKey = makeVariantId(variationAttributeName, value);
+      const prev = prevRows.find((row) => row.variantKey === variantKey);
+      return prev || {
+        variantKey,
+        attribute: normalizeAttr(variationAttributeName),
+        value,
+        sku: "",
+        price: form.price || "",
+        regularPrice: form.originalPrice || "",
+        salePrice: form.salePrice || "",
+        stock: form.stock || "",
+        colorCode: "",
+        image: "",
+      };
+    });
+  };
+
+  const updateVariantRow = (variantKey, field, value) => {
+    setVariantRows((rows) => rows.map((row) => (
+      row.variantKey === variantKey ? { ...row, [field]: value } : row
+    )));
+  };
+
+  const validateVariants = () => {
+    if (form.productType !== "variable") return true;
+    if (!variationAttributeName || variationValues.length === 0) {
+      toast.error("Add at least one attribute with values for variable products");
+      return false;
+    }
+
+    const skuSet = new Set();
+    for (const row of variantRows) {
+      if (!row.sku.trim()) {
+        toast.error(`SKU is required for ${row.value}`);
+        return false;
+      }
+      if (skuSet.has(row.sku.trim().toLowerCase())) {
+        toast.error("Each variant SKU must be unique");
+        return false;
+      }
+      skuSet.add(row.sku.trim().toLowerCase());
+
+      if (!row.price) {
+        toast.error(`Price is required for ${row.value}`);
+        return false;
+      }
+      if (row.stock === "" || row.stock === null || row.stock === undefined) {
+        toast.error(`Stock is required for ${row.value}`);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Product name is required"); return; }
     if (!form.price)        { toast.error("Price is required"); return; }
+    if (!validateVariants()) return;
 
     setSaving(true);
     try {
@@ -382,15 +538,47 @@ export default function AddProduct() {
       ]
         .filter(Boolean)
         .join("\n");
-      const mergedShortDescription = [
+      const mergedHighlights = [
         form.shortDescription || "",
         ...shortMediaUrls.map((url) => `![media](${url})`),
       ]
         .filter(Boolean)
         .join("\n");
+      const pendingTag = tagInput.trim().toLowerCase();
+      const finalTags = Array.from(
+        new Set([
+          ...(form.tags || []),
+          ...(pendingTag ? [pendingTag] : []),
+        ])
+      );
+      const homeSections = [
+        form.showInStartFirstOrder ? "start_first_order" : "",
+        form.showInRecommendedSalon ? "recommended_salon" : "",
+        form.showInMostBought ? "most_bought" : "",
+        form.showInPopularProducts ? "popular_products" : "",
+      ].filter(Boolean);
+      const inlineVariants = form.productType === "variable"
+        ? variantRows.map((row) => ({
+            id: row.variantKey,
+            attribute: row.attribute || normalizeAttr(variationAttributeName || "variant"),
+            value: row.value,
+            shadeName: row.value,
+            sku: row.sku.trim(),
+            price: Number(row.price) || 0,
+            regularPrice: Number(row.regularPrice) || 0,
+            salePrice: Number(row.salePrice) || 0,
+            stock: Number(row.stock) || 0,
+            colorCode: row.colorCode || "",
+            image: row.image || "",
+          }))
+        : [];
       const data = {
         ...form,
-        shortDescription: mergedShortDescription,
+        shortDescription: mergedHighlights,
+        highlights: mergedHighlights,
+        howToUse: form.howToUse || "",
+        how_to_use: form.howToUse || "",
+        usage: form.howToUse || "",
         category: form.selectedCategories[0] || form.category || "",
         selectedCategories: form.selectedCategories || [],
         subCategory: form.subCategory || "",
@@ -404,17 +592,55 @@ export default function AddProduct() {
         stock:         form.manageStock ? Number(form.stock) || 0 : 0,
         image: imageUrl,
         imageUrl: imageUrl,
-        tags: form.tags || [],
+        tags: finalTags,
+        tag: finalTags[0] || form.tag || "",
         additionalImages: mergedAdditionalImages,
         attributes: form.attributes || [],
+        showInStartFirstOrder: Boolean(form.showInStartFirstOrder),
+        showInRecommendedSalon: Boolean(form.showInRecommendedSalon),
+        showInMostBought: Boolean(form.showInMostBought),
+        showInPopularProducts: Boolean(form.showInPopularProducts),
+        isRecommended: Boolean(form.showInRecommendedSalon),
+        isPopular: Boolean(form.showInPopularProducts),
+        homeSection: homeSections[0] || form.homeSection || "",
+        homeSections,
+        variants: inlineVariants,
       };
+      let productId = id;
       if (isEdit) {
         await updateProduct(id, data);
+        productId = id;
         toast.success("Product updated!");
       } else {
-        await addProduct(data);
+        const created = await createProduct(data);
+        productId = created.id;
         toast.success("Product added!");
       }
+
+      if (form.productType === "variable" && productId) {
+        const keptDocIds = new Set();
+        for (const row of variantRows) {
+          const payload = {
+            attribute: row.attribute || normalizeAttr(variationAttributeName || "variant"),
+            value: row.value,
+            sku: row.sku.trim(),
+            price: Number(row.price) || 0,
+            regularPrice: Number(row.regularPrice) || 0,
+            salePrice: Number(row.salePrice) || 0,
+            stock: Number(row.stock) || 0,
+            colorCode: row.colorCode || "",
+            image: row.image || "",
+          };
+          const created = await createVariant(productId, payload);
+          keptDocIds.add(created.id);
+        }
+
+        if (isEdit && existingVariantIds.length > 0) {
+          const stale = existingVariantIds.filter((docId) => !keptDocIds.has(docId));
+          await Promise.all(stale.map((docId) => deleteProductVariant(productId, docId)));
+        }
+      }
+
       navigate("/products");
     } catch (err) {
       toast.error("Failed to save product");
@@ -496,7 +722,7 @@ export default function AddProduct() {
 
             <div className="pe-short-desc-wrap">
               <div className="pe-short-desc-head">
-                <h4>Product short description</h4>
+                <h4>Product Highlights</h4>
                 <div className="pe-short-actions">
                   <input
                     ref={shortMediaRef}
@@ -512,7 +738,7 @@ export default function AddProduct() {
               </div>
               <textarea
                 className="pe-short-desc"
-                placeholder="Write a short product summary..."
+                placeholder="Write key highlights..."
                 value={form.shortDescription}
                 onChange={(e) => set("shortDescription", e.target.value)}
               />
@@ -531,6 +757,16 @@ export default function AddProduct() {
                   ))}
                 </div>
               )}
+
+              <div style={{ marginTop: 12 }}>
+                <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>How to use</h4>
+                <textarea
+                  className="pe-short-desc"
+                  placeholder="Write usage instructions (step-by-step)..."
+                  value={form.howToUse}
+                  onChange={(e) => set("howToUse", e.target.value)}
+                />
+              </div>
             </div>
           </div>
 
@@ -567,6 +803,46 @@ export default function AddProduct() {
               )}
             </div>
 
+            <div className="pe-variable-box" style={{ marginTop: 8 }}>
+              <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>
+                Show product in home sections
+              </label>
+              <div className="pe-inline-group pe-feature-row" style={{ marginBottom: 0 }}>
+                <label className="pe-check">
+                  <input
+                    type="checkbox"
+                    checked={form.showInStartFirstOrder}
+                    onChange={(e) => set("showInStartFirstOrder", e.target.checked)}
+                  />
+                  Start your first order
+                </label>
+                <label className="pe-check">
+                  <input
+                    type="checkbox"
+                    checked={form.showInRecommendedSalon}
+                    onChange={(e) => set("showInRecommendedSalon", e.target.checked)}
+                  />
+                  Recommended for your salon
+                </label>
+                <label className="pe-check">
+                  <input
+                    type="checkbox"
+                    checked={form.showInMostBought}
+                    onChange={(e) => set("showInMostBought", e.target.checked)}
+                  />
+                  Most Bought Products
+                </label>
+                <label className="pe-check">
+                  <input
+                    type="checkbox"
+                    checked={form.showInPopularProducts}
+                    onChange={(e) => set("showInPopularProducts", e.target.checked)}
+                  />
+                  Popular Products
+                </label>
+              </div>
+            </div>
+
             {form.productType === "variable" && (
               <div className="pe-variable-box">
                 <label>Variation options</label>
@@ -586,49 +862,218 @@ export default function AddProduct() {
               <h3>Product Attributes</h3>
             </div>
 
-            <div className="pe-attribute-add">
-              <select value={selectedAttribute} onChange={(e) => setSelectedAttribute(e.target.value)}>
-                <option value="">Select Attribute</option>
-                {ATTRIBUTE_OPTIONS.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-              <input
-                className="pe-input"
-                placeholder="Or custom attribute name"
-                value={customAttributeName}
-                onChange={(e) => setCustomAttributeName(e.target.value)}
-              />
-              <button type="button" className="btn btn-outline" onClick={addAttribute}><MdAdd /> Add</button>
+            {/* ── Attribute Selector ───────────────────────── */}
+            <div className="pa-selector-row">
+              <div className="pa-dropdown-col">
+                <label className="pa-dropdown-label">Select Attribute</label>
+                <select
+                  className="pa-attr-select"
+                  value={selectedGlobalAttr?.id || ""}
+                  onChange={(e) => {
+                    const found = globalAttributes.find((a) => a.id === e.target.value);
+                    setSelectedGlobalAttr(found || null);
+                    setChosenAttrValues([]);
+                  }}
+                >
+                  <option value="">Select Attribute</option>
+                  {globalAttributes.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedGlobalAttr && (
+                <div className="pa-values-panel">
+                  <p className="pa-values-panel-label">Choose Attribute Values</p>
+                  <div className="pa-values-grid">
+                    {selectedGlobalAttr.isColorField
+                      ? (selectedGlobalAttr.values || []).map((hex) => (
+                          <button
+                            key={hex}
+                            type="button"
+                            className={`pa-color-swatch ${chosenAttrValues.includes(hex) ? "pa-swatch-on" : ""}`}
+                            style={{ background: hex }}
+                            onClick={() =>
+                              setChosenAttrValues((prev) =>
+                                prev.includes(hex) ? prev.filter((x) => x !== hex) : [...prev, hex]
+                              )
+                            }
+                            title={hex}
+                          />
+                        ))
+                      : (selectedGlobalAttr.values || []).map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            className={`pa-value-chip ${chosenAttrValues.includes(val) ? "pa-chip-on" : ""}`}
+                            onClick={() =>
+                              setChosenAttrValues((prev) =>
+                                prev.includes(val) ? prev.filter((x) => x !== val) : [...prev, val]
+                              )
+                            }
+                          >
+                            {val}
+                          </button>
+                        ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="btn btn-primary pa-add-attr-btn"
+                onClick={addAttributeFromGlobal}
+                disabled={!selectedGlobalAttr}
+              >
+                <MdAdd /> Add Attribute
+              </button>
             </div>
 
-            <div className="pe-attribute-list">
-              {form.attributes.length === 0 && <p className="text-muted">No attributes added yet.</p>}
-              {form.attributes.map((attr) => (
-                <div className="pe-attribute-item" key={attr.name}>
-                  <div className="pe-attribute-meta">
-                    <div className="font-medium">{attr.name}</div>
-                    <input
-                      className="pe-input pe-attr-values"
-                      placeholder="Values (comma separated)"
-                      value={Array.isArray(attr.values) ? attr.values.join(", ") : ""}
-                      onChange={(e) => updateAttributeValues(attr.name, e.target.value)}
-                    />
-                    <label className="pe-check" style={{ marginTop: 6 }}>
-                      <input
-                        type="checkbox"
-                        checked={attr.useForVariations !== false}
-                        onChange={(e) => toggleAttributeVariation(attr.name, e.target.checked)}
-                      />
-                      Use for variations
-                    </label>
-                  </div>
-                  <button type="button" className="pe-delete-btn" onClick={() => removeAttribute(attr.name)}>
-                    <MdDeleteOutline />
-                  </button>
-                </div>
-              ))}
+            {/* ── All Attributes (added) ───────────────────── */}
+            <div className="pa-all-attributes-section">
+              <h4 className="pa-all-attrs-title">All Attributes</h4>
+              <div className="pa-all-attrs-box">
+                {form.attributes.length === 0 ? (
+                  <p className="pa-empty-text">There are no attributes added for this product</p>
+                ) : (
+                  form.attributes.map((attr) => (
+                    <div className="pa-added-attr-row" key={attr.name}>
+                      <div className="pa-added-attr-name">{attr.name}</div>
+                      <div className="pa-added-attr-values">
+                        {attr.isColorField
+                          ? (attr.values || []).map((hex) => (
+                              <span
+                                key={hex}
+                                className="pa-display-swatch"
+                                style={{ background: hex }}
+                                title={hex}
+                              />
+                            ))
+                          : (attr.values || []).map((val) => (
+                              <span key={val} className="pa-display-chip">{val}</span>
+                            ))}
+                      </div>
+                      <label className="pe-check" style={{ marginLeft: "auto" }}>
+                        <input
+                          type="checkbox"
+                          checked={attr.useForVariations !== false}
+                          onChange={(e) => toggleAttributeVariation(attr.name, e.target.checked)}
+                        />
+                        Use for variations
+                      </label>
+                      <button
+                        type="button"
+                        className="pe-delete-btn"
+                        onClick={() => removeAttribute(attr.name)}
+                        style={{ marginLeft: 8 }}
+                      >
+                        <MdDeleteOutline />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
+
+            {form.productType === "variable" && (
+              <div style={{ marginTop: 16 }}>
+                <h4 style={{ marginBottom: 8 }}>Variant Configuration</h4>
+                {!variationAttributeName || variationValues.length === 0 ? (
+                  <p className="text-muted">Select an attribute and add values to generate variants.</p>
+                ) : (
+                  <div className="table-wrap pe-variant-table-wrap">
+                    <table className="pe-variant-table">
+                      <thead>
+                        <tr>
+                          <th>Value</th>
+                          <th>SKU</th>
+                          <th>Price</th>
+                          <th>Regular Price</th>
+                          <th>Sale Price</th>
+                          <th>Stock</th>
+                          <th>Color Code</th>
+                          <th>Image URL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {variantRows.map((row) => (
+                          <tr key={row.variantKey}>
+                            <td>
+                              {variationAttribute?.isColorField ? (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span style={{ display: "inline-block", width: 24, height: 24, borderRadius: "50%", background: row.value, border: "1px solid #e2e8f0", flexShrink: 0 }} />
+                                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{row.value}</span>
+                                </div>
+                              ) : row.value}
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input pe-variant-sku-input"
+                                value={row.sku}
+                                onChange={(e) => updateVariantRow(row.variantKey, "sku", e.target.value)}
+                                placeholder="SKU"
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="0"
+                                value={row.price}
+                                onChange={(e) => updateVariantRow(row.variantKey, "price", e.target.value)}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="0"
+                                value={row.regularPrice}
+                                onChange={(e) => updateVariantRow(row.variantKey, "regularPrice", e.target.value)}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="0"
+                                value={row.salePrice}
+                                onChange={(e) => updateVariantRow(row.variantKey, "salePrice", e.target.value)}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="0"
+                                value={row.stock}
+                                onChange={(e) => updateVariantRow(row.variantKey, "stock", e.target.value)}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                value={row.colorCode}
+                                onChange={(e) => updateVariantRow(row.variantKey, "colorCode", e.target.value)}
+                                placeholder="#000000"
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                value={row.image}
+                                onChange={(e) => updateVariantRow(row.variantKey, "image", e.target.value)}
+                                placeholder="https://..."
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
@@ -833,7 +1278,16 @@ export default function AddProduct() {
               {form.tags.map((tag) => (
                 <span className="pe-tag-chip" key={tag}>
                   {tag}
-                  <button type="button" onClick={() => set("tags", form.tags.filter((t) => t !== tag))}>x</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = form.tags.filter((t) => t !== tag);
+                      set("tags", next);
+                      set("tag", next[0] || "");
+                    }}
+                  >
+                    x
+                  </button>
                 </span>
               ))}
             </div>
@@ -850,3 +1304,5 @@ export default function AddProduct() {
     </div>
   );
 }
+
+
