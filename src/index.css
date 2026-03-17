@@ -531,6 +531,58 @@ input:checked + .slider::before { transform: translateX(18px); }
   border-color: var(--primary);
 }
 
+/* ─── Product reviews ────────────── */
+.review-layout {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.review-create-card .form-grid {
+  padding-bottom: 8px;
+}
+
+.review-toolbar {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.review-filter-row {
+  padding: 12px 18px 0;
+  margin-bottom: 10px;
+}
+
+.review-text {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  max-width: 440px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-stars {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+.review-stars .on {
+  color: #f59e0b;
+}
+
+.review-stars .off {
+  color: #cbd5e1;
+}
+
+@media (max-width: 1080px) {
+  .review-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ─── Misc ────────────────────────── */
 .flex       { display: flex; }
 .items-center { align-items: center; }

@@ -86,3 +86,78 @@ export const addSubCategory = (data) => addItem("subCategories", data);
 export const updateSubCategory = (id, data) =>
   updateItem("subCategories", id, data);
 export const deleteSubCategory = (id) => deleteItem("subCategories", id);
+
+// ─── Product Reviews ──────────────────────────────────────────────────────────
+const REVIEW_COLLECTIONS = ["productReviews", "reviews"];
+
+const getCollectionDocsSafe = async (colName) => {
+  try {
+    const ordered = await getDocs(
+      query(collection(db, colName), orderBy("createdAt", "desc"))
+    );
+    return ordered.docs.map((d) => ({ id: d.id, __col: colName, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, colName));
+    return snap.docs.map((d) => ({ id: d.id, __col: colName, ...d.data() }));
+  }
+};
+
+const toMillis = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value?.toDate === "function") return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const getProductReviews = async () => {
+  const all = await Promise.all(REVIEW_COLLECTIONS.map((name) => getCollectionDocsSafe(name)));
+  const merged = all.flat();
+  merged.sort((a, b) => {
+    const bTime = toMillis(b.createdAt) || toMillis(b.submittedAt);
+    const aTime = toMillis(a.createdAt) || toMillis(a.submittedAt);
+    return bTime - aTime;
+  });
+  return merged;
+};
+
+export const addProductReview = async (data) => {
+  return await addDoc(collection(db, "productReviews"), {
+    ...data,
+    approved: Boolean(data.approved),
+    status: data.approved ? "approved" : "pending",
+    visibility: data.approved ? "global" : "author_only",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+};
+
+export const approveProductReview = async (id, extra = {}, collectionName = "productReviews") => {
+  return await updateDoc(doc(db, collectionName, id), {
+    approved: true,
+    status: "approved",
+    visibility: "global",
+    approvedAt: serverTimestamp(),
+    ...extra,
+    updatedAt: serverTimestamp(),
+  });
+};
+
+export const setProductReviewStatus = async (
+  id,
+  status,
+  extra = {},
+  collectionName = "productReviews"
+) => {
+  const approved = status === "approved";
+  return await updateDoc(doc(db, collectionName, id), {
+    status,
+    approved,
+    visibility: approved ? "global" : "author_only",
+    ...(approved ? { approvedAt: serverTimestamp() } : {}),
+    ...extra,
+    updatedAt: serverTimestamp(),
+  });
+};

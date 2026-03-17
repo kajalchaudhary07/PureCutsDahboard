@@ -11,6 +11,7 @@ import CategoriesList from "./pages/categories/CategoriesList";
 import SubCategoriesList from "./pages/subcategories/SubCategoriesList";
 import AttributesList from "./pages/attributes/AttributesList";
 import CreateAttribute from "./pages/attributes/CreateAttribute";
+import ProductReviews from "./pages/reviews/ProductReviews";
 import PlaceholderPage from "./pages/PlaceholderPage";
 
 export default function App() {
@@ -39,7 +40,7 @@ export default function App() {
               <Route path="units" element={<PlaceholderPage title="Units" />} />
               <Route path="customers" element={<PlaceholderPage title="Customers" />} />
               <Route path="orders" element={<PlaceholderPage title="Orders" />} />
-              <Route path="product-reviews" element={<PlaceholderPage title="Product Reviews" />} />
+              <Route path="product-reviews" element={<ProductReviews />} />
               <Route path="banners" element={<PlaceholderPage title="Banners" />} />
               <Route path="coupons" element={<PlaceholderPage title="Coupons" />} />
               <Route path="notifications" element={<PlaceholderPage title="Notifications" />} />
