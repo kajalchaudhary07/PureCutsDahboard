@@ -577,9 +577,272 @@ input:checked + .slider::before { transform: translateX(18px); }
   color: #cbd5e1;
 }
 
+.review-table {
+  table-layout: fixed;
+}
+
+.review-table th:nth-child(1) { width: 22%; }
+.review-table th:nth-child(2) { width: 18%; }
+.review-table th:nth-child(3) { width: 11%; }
+.review-table th:nth-child(4) { width: 20%; }
+.review-table th:nth-child(5) { width: 12%; }
+.review-table th:nth-child(6) { width: 10%; }
+.review-table th:nth-child(7) { width: 12%; }
+.review-table th:nth-child(8) { width: 13%; }
+
+.review-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.review-thumb,
+.review-thumb-fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #f1f5f9;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.review-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 18px;
+}
+
+.review-product-meta {
+  min-width: 0;
+}
+
+.review-product-name {
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.review-text-clamp {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.review-action-wrap .btn {
+  white-space: nowrap;
+}
+
+.review-top-actions {
+  margin-bottom: 12px;
+}
+
+.review-create-btn {
+  padding: 12px 26px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.review-main-card {
+  padding: 14px;
+}
+
+.review-search-row {
+  margin-bottom: 14px;
+}
+
+.review-search-wrap {
+  width: 100%;
+  display: flex;
+}
+
+.review-search-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.review-ref-table {
+  table-layout: auto;
+}
+
+.review-ref-table thead th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 15px;
+  color: #475569;
+}
+
+.review-ref-table tbody td {
+  font-size: 18px;
+  vertical-align: middle;
+}
+
+.review-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.review-row-image,
+.review-row-image-fallback {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.review-image-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: zoom-in;
+  display: inline-flex;
+  border-radius: 10px;
+}
+
+.review-image-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.review-row-image-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 20px;
+}
+
+.review-product-name {
+  line-height: 1.35;
+  color: #1f2937;
+  max-width: 220px;
+}
+
+.review-linkish {
+  color: #4f46e5;
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-rating-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-user-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+.review-user-name {
+  color: #1f2937;
+  font-weight: 500;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-approve-pill {
+  border: 1px solid #d1d5db;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 999px;
+  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.review-approve-pill svg {
+  color: #3b82f6;
+  font-size: 20px;
+}
+
+.review-approve-pill.approved {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.review-approve-pill.approved svg {
+  color: #16a34a;
+}
+
+.review-delete-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: #fee2e2;
+  color: #ef4444;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.review-image-viewer {
+  max-width: 780px;
+}
+
+.review-image-viewer-body {
+  padding: 14px;
+  background: #0f172a;
+  border-radius: 0 0 14px 14px;
+}
+
+.review-image-viewer-img {
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #0f172a;
+}
+
 @media (max-width: 1080px) {
   .review-layout {
     grid-template-columns: 1fr;
+  }
+
+  .review-table {
+    table-layout: auto;
   }
 }
 
