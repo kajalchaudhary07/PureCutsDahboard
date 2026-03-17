@@ -2,7 +2,10 @@ import {
   collection,
   collectionGroup,
   getDocs,
+  getDoc,
   addDoc,
+  setDoc,
+  writeBatch,
   updateDoc,
   deleteDoc,
   doc,
@@ -362,4 +365,234 @@ export const deleteProductReview = async (
   if (successCount === 0) {
     throw new Error("Could not delete review from any target path");
   }
+};
+
+// ─── Orders ──────────────────────────────────────────────────────────────────
+export const getOrders = async () => {
+  try {
+    const snap = await getDocs(
+      query(collection(db, "orders"), orderBy("createdAt", "desc"))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "orders"));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+};
+
+export const addOrder = (data) => addItem("orders", data);
+export const updateOrder = (id, data) => updateItem("orders", id, data);
+export const deleteOrder = (id) => deleteItem("orders", id);
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+export const getNotifications = async () => {
+  try {
+    const snap = await getDocs(
+      query(collection(db, "notifications"), orderBy("createdAt", "desc"))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "notifications"));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+};
+
+export const createOrderNotification = async ({
+  order,
+  status,
+  title,
+  message,
+  sendSms,
+  sendWhatsapp,
+  createdBy,
+}) => {
+  const payload = {
+    orderId: order.id,
+    orderRef: order.orderId || order.code || order.number || order.id,
+    userId: order.userId || order.customerId || order.customer?.id || "",
+    customerName:
+      order.customerName || order.customer?.name || order.userName || "Unknown Customer",
+    customerEmail:
+      order.customerEmail || order.customer?.email || order.email || "",
+    phone:
+      order.phone ||
+      order.customerPhone ||
+      order.customer?.phone ||
+      order.userPhone ||
+      "",
+    status,
+    title,
+    message,
+    type: "order_status",
+    channels: {
+      app: true,
+      sms: Boolean(sendSms),
+      whatsapp: Boolean(sendWhatsapp),
+    },
+    sentAt: serverTimestamp(),
+    createdBy: createdBy || "admin",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const notifRef = await addDoc(collection(db, "notifications"), payload);
+
+  if (sendSms && payload.phone) {
+    await addDoc(collection(db, "smsQueue"), {
+      notificationId: notifRef.id,
+      userId: payload.userId || "",
+      phone: payload.phone,
+      message,
+      status: "pending",
+      source: "dashboard_notifications",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  if (sendWhatsapp && payload.phone) {
+    await addDoc(collection(db, "whatsappQueue"), {
+      notificationId: notifRef.id,
+      userId: payload.userId || "",
+      phone: payload.phone,
+      message,
+      status: "pending",
+      source: "dashboard_notifications",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
+
+  return notifRef;
+};
+
+export const getUsers = async () => {
+  const snap = await getDocs(collection(db, "users"));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+const chunk = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
+export const createBroadcastNotification = async ({
+  title,
+  message,
+  type,
+  users,
+  sendApp,
+  sendWhatsapp,
+  createdBy,
+}) => {
+  const payload = {
+    title,
+    message,
+    type,
+    audience: "all_users",
+    userCount: users.length,
+    channels: {
+      app: Boolean(sendApp),
+      whatsapp: Boolean(sendWhatsapp),
+    },
+    sentAt: serverTimestamp(),
+    createdBy: createdBy || "admin",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const notifRef = await addDoc(collection(db, "notifications"), payload);
+
+  if (sendApp && users.length) {
+    const groups = chunk(users, 350);
+    for (const group of groups) {
+      const batch = writeBatch(db);
+      group.forEach((user) => {
+        const ref = doc(collection(db, "userNotifications"));
+        batch.set(ref, {
+          notificationId: notifRef.id,
+          userId: user.uid || user.id,
+          title,
+          message,
+          type,
+          read: false,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+  }
+
+  if (sendWhatsapp && users.length) {
+    const phoneUsers = users.filter((u) => u.phone || u.mobile || u.phoneNumber);
+    const groups = chunk(phoneUsers, 350);
+
+    for (const group of groups) {
+      const batch = writeBatch(db);
+      group.forEach((user) => {
+        const ref = doc(collection(db, "whatsappQueue"));
+        batch.set(ref, {
+          notificationId: notifRef.id,
+          userId: user.uid || user.id,
+          phone: user.phone || user.mobile || user.phoneNumber,
+          message,
+          status: "pending",
+          source: "dashboard_broadcast",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+  }
+
+  return notifRef;
+};
+
+// ─── Admins ───────────────────────────────────────────────────────────────────
+export const getAdmins = () => getAll("admins");
+export const addAdmin = (data) => addItem("admins", {
+  ...data,
+  active: Boolean(data.active),
+  role: data.role || "admin",
+});
+export const updateAdmin = (id, data) => updateItem("admins", id, {
+  ...data,
+  active: Boolean(data.active),
+});
+export const deleteAdmin = (id) => deleteItem("admins", id);
+export const toggleAdminStatus = (id, active) => updateAdmin(id, { active: !active });
+
+// ─── Roles & Permissions ─────────────────────────────────────────────────────
+const roleDocId = (roleName) =>
+  String(roleName || "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+export const getRolePermissions = async (roleName) => {
+  const ref = doc(db, "rolePermissions", roleDocId(roleName));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() };
+};
+
+export const saveRolePermissions = async (roleName, permissions) => {
+  const ref = doc(db, "rolePermissions", roleDocId(roleName));
+  const snap = await getDoc(ref);
+
+  await setDoc(
+    ref,
+    {
+      role: roleName,
+      permissions,
+      updatedAt: serverTimestamp(),
+      ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
+    },
+    { merge: true }
+  );
 };

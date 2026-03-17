@@ -12,6 +12,10 @@ import SubCategoriesList from "./pages/subcategories/SubCategoriesList";
 import AttributesList from "./pages/attributes/AttributesList";
 import CreateAttribute from "./pages/attributes/CreateAttribute";
 import ProductReviews from "./pages/reviews/ProductReviews";
+import AdminManagement from "./pages/admin/AdminManagement";
+import RolesManagement from "./pages/roles/RolesManagement";
+import OrdersList from "./pages/orders/OrdersList";
+import NotificationsPage from "./pages/notifications/NotificationsPage";
 import PlaceholderPage from "./pages/PlaceholderPage";
 
 export default function App() {
@@ -39,14 +43,14 @@ export default function App() {
               <Route path="attributes/edit/:id" element={<CreateAttribute />} />
               <Route path="units" element={<PlaceholderPage title="Units" />} />
               <Route path="customers" element={<PlaceholderPage title="Customers" />} />
-              <Route path="orders" element={<PlaceholderPage title="Orders" />} />
+              <Route path="orders" element={<OrdersList />} />
               <Route path="product-reviews" element={<ProductReviews />} />
               <Route path="banners" element={<PlaceholderPage title="Banners" />} />
               <Route path="coupons" element={<PlaceholderPage title="Coupons" />} />
-              <Route path="notifications" element={<PlaceholderPage title="Notifications" />} />
+              <Route path="notifications" element={<NotificationsPage />} />
               <Route path="chat" element={<PlaceholderPage title="Chat" />} />
-              <Route path="admin" element={<PlaceholderPage title="Admin" />} />
-              <Route path="roles" element={<PlaceholderPage title="Roles" />} />
+              <Route path="admin" element={<AdminManagement />} />
+              <Route path="roles" element={<RolesManagement />} />
               <Route path="profile" element={<PlaceholderPage title="Profile" />} />
               <Route path="app-settings" element={<PlaceholderPage title="App Settings" />} />
             </Route>
