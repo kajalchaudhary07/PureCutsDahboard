@@ -6,7 +6,6 @@ const titles = {
   "/media":          "Media",
   "/products":       "Products",
   "/products/add":   "Add Product",
-  "/products/recommended": "Recommended Products",
   "/brands":         "Brands",
   "/categories":     "Categories",
   "/subcategories":  "Sub Categories",
@@ -33,6 +32,7 @@ function getTitle(pathname) {
 export default function Header() {
   const { pathname } = useLocation();
   const { user, logout, claims } = useAuth();
+  
   const title = getTitle(pathname);
 
   const parts = pathname.split("/").filter(Boolean);

@@ -16,7 +16,15 @@ import AdminManagement from "./pages/admin/AdminManagement";
 import RolesManagement from "./pages/roles/RolesManagement";
 import OrdersList from "./pages/orders/OrdersList";
 import NotificationsPage from "./pages/notifications/NotificationsPage";
-import PlaceholderPage from "./pages/PlaceholderPage";
+import ChatPage from "./pages/chat/ChatPage";
+import DashboardPage from "./pages/dashboard/DashboardPage";
+import MediaPage from "./pages/media/MediaPage";
+import UnitsPage from "./pages/units/UnitsPage";
+import CustomersPage from "./pages/customers/CustomersPage";
+import BannersPage from "./pages/banners/BannersPage";
+import CouponsPage from "./pages/coupons/CouponsPage";
+import ProfilePage from "./pages/profile/ProfilePage";
+import AppSettingsPage from "./pages/settings/AppSettingsPage";
 
 export default function App() {
   return (
@@ -29,30 +37,29 @@ export default function App() {
           <Route element={<RequireAdmin />}>
             <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<PlaceholderPage title="Dashboard" />} />
-              <Route path="media" element={<PlaceholderPage title="Media" />} />
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="media" element={<MediaPage />} />
               <Route path="products" element={<ProductsList />} />
               <Route path="products/add" element={<AddProduct />} />
               <Route path="products/edit/:id" element={<AddProduct />} />
-              <Route path="products/recommended" element={<PlaceholderPage title="Recommended Products" />} />
               <Route path="brands" element={<BrandsList />} />
               <Route path="categories" element={<CategoriesList />} />
               <Route path="subcategories" element={<SubCategoriesList />} />
               <Route path="attributes" element={<AttributesList />} />
               <Route path="attributes/create" element={<CreateAttribute />} />
               <Route path="attributes/edit/:id" element={<CreateAttribute />} />
-              <Route path="units" element={<PlaceholderPage title="Units" />} />
-              <Route path="customers" element={<PlaceholderPage title="Customers" />} />
+              <Route path="units" element={<UnitsPage />} />
+              <Route path="customers" element={<CustomersPage />} />
               <Route path="orders" element={<OrdersList />} />
               <Route path="product-reviews" element={<ProductReviews />} />
-              <Route path="banners" element={<PlaceholderPage title="Banners" />} />
-              <Route path="coupons" element={<PlaceholderPage title="Coupons" />} />
+              <Route path="banners" element={<BannersPage />} />
+              <Route path="coupons" element={<CouponsPage />} />
               <Route path="notifications" element={<NotificationsPage />} />
-              <Route path="chat" element={<PlaceholderPage title="Chat" />} />
+              <Route path="chat" element={<ChatPage />} />
               <Route path="admin" element={<AdminManagement />} />
               <Route path="roles" element={<RolesManagement />} />
-              <Route path="profile" element={<PlaceholderPage title="Profile" />} />
-              <Route path="app-settings" element={<PlaceholderPage title="App Settings" />} />
+              <Route path="profile" element={<ProfilePage />} />
+              <Route path="app-settings" element={<AppSettingsPage />} />
             </Route>
           </Route>
         </Route>

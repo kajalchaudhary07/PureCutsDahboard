@@ -9,7 +9,6 @@ import {
   MdStraighten,
   MdAddBox,
   MdInventory2,
-  MdStarBorder,
   MdPeople,
   MdShoppingCart,
   MdRateReview,
@@ -47,7 +46,6 @@ const menuSections = [
     items: [
       { label: "Add new product", path: "/products/add", icon: <MdAddBox /> },
       { label: "Products", path: "/products", icon: <MdInventory2 />, end: true },
-      { label: "Recommended Products", path: "/products/recommended", icon: <MdStarBorder /> },
       { label: "Customers", path: "/customers", icon: <MdPeople /> },
       { label: "Orders", path: "/orders", icon: <MdShoppingCart /> },
       { label: "Product Reviews", path: "/product-reviews", icon: <MdRateReview /> },
@@ -106,7 +104,7 @@ export default function Sidebar() {
         <div className="logo-icon">
           <MdStorefront />
         </div>
-        <span>T Store</span>
+        <span>PureCuts</span>
       </div>
 
       <nav className="sidebar-nav">
