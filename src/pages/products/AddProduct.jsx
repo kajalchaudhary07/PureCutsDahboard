@@ -83,6 +83,7 @@ export default function AddProduct() {
   const additionalRef = useRef();
   const descriptionMediaRef = useRef();
   const shortMediaRef = useRef();
+  const descriptionEditorRef = useRef();
 
   const normalizeAttr = (value) =>
     value
@@ -158,7 +159,11 @@ export default function AddProduct() {
             onSale: Boolean(found.onSale),
             salePrice: found.salePrice || "",
             variableOptions: found.variableOptions || "",
-            showInStartFirstOrder: Boolean(found.showInStartFirstOrder || hasLegacy(["start_first_order"])),
+            showInStartFirstOrder: Boolean(
+              found.showInStartFirstOrder ||
+                found.showInHotDeals ||
+                hasLegacy(["hot_deals", "start_first_order"])
+            ),
             showInRecommendedSalon: Boolean(found.showInRecommendedSalon || found.isRecommended || hasLegacy(["recommended_salon", "recommended"])),
             showInMostBought: Boolean(found.showInMostBought || hasLegacy(["most_bought", "most_bought_products", "bestseller"])),
             showInPopularProducts: Boolean(found.showInPopularProducts || found.isPopular || hasLegacy(["popular_products", "popular"])),
@@ -210,6 +215,71 @@ export default function AddProduct() {
   ]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const applyDescriptionFormat = (action) => {
+    const el = descriptionEditorRef.current;
+    if (!el) return;
+
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+    const source = form.description || "";
+    const selected = source.slice(start, end);
+
+    const fallback = {
+      bold: "bold text",
+      italic: "italic text",
+      underline: "underlined text",
+      h1: "Heading",
+      list: "List item",
+      link: "link text",
+      align: "aligned text",
+    };
+
+    const picked = selected || fallback[action] || "text";
+    let next = source;
+    let nextStart = start;
+    let nextEnd = end;
+
+    const replaceRange = (replacement, cursorFrom = 0, cursorTo = replacement.length) => {
+      next = `${source.slice(0, start)}${replacement}${source.slice(end)}`;
+      nextStart = start + cursorFrom;
+      nextEnd = start + cursorTo;
+    };
+
+    if (action === "bold") {
+      const out = `**${picked}**`;
+      replaceRange(out, 2, 2 + picked.length);
+    } else if (action === "italic") {
+      const out = `*${picked}*`;
+      replaceRange(out, 1, 1 + picked.length);
+    } else if (action === "underline") {
+      const out = `__${picked}__`;
+      replaceRange(out, 2, 2 + picked.length);
+    } else if (action === "h1") {
+      const out = `# ${picked}`;
+      replaceRange(out, 2, 2 + picked.length);
+    } else if (action === "list") {
+      const lines = picked
+        .split("\n")
+        .map((line) => (line.trim().startsWith("- ") ? line : `- ${line}`))
+        .join("\n");
+      replaceRange(lines);
+    } else if (action === "link") {
+      const out = `[${picked}](https://)`;
+      replaceRange(out, picked.length + 3, picked.length + 11);
+    } else if (action === "align") {
+      const out = `[align:center]${picked}[/align]`;
+      replaceRange(out, 14, 14 + picked.length);
+    }
+
+    set("description", next);
+
+    requestAnimationFrame(() => {
+      if (!descriptionEditorRef.current) return;
+      descriptionEditorRef.current.focus();
+      descriptionEditorRef.current.setSelectionRange(nextStart, nextEnd);
+    });
+  };
 
   const toggleCategory = (name) => {
     if (form.selectedCategories.includes(name)) {
@@ -552,6 +622,7 @@ export default function AddProduct() {
         ])
       );
       const homeSections = [
+        form.showInStartFirstOrder ? "hot_deals" : "",
         form.showInStartFirstOrder ? "start_first_order" : "",
         form.showInRecommendedSalon ? "recommended_salon" : "",
         form.showInMostBought ? "most_bought" : "",
@@ -597,6 +668,7 @@ export default function AddProduct() {
         additionalImages: mergedAdditionalImages,
         attributes: form.attributes || [],
         showInStartFirstOrder: Boolean(form.showInStartFirstOrder),
+        showInHotDeals: Boolean(form.showInStartFirstOrder),
         showInRecommendedSalon: Boolean(form.showInRecommendedSalon),
         showInMostBought: Boolean(form.showInMostBought),
         showInPopularProducts: Boolean(form.showInPopularProducts),
@@ -690,15 +762,16 @@ export default function AddProduct() {
               </div>
             </div>
             <div className="pe-editor-toolbar">
-              <span>B</span>
-              <span>I</span>
-              <span>U</span>
-              <span>H1</span>
-              <span>List</span>
-              <span>Link</span>
-              <span>Align</span>
+              <button type="button" onClick={() => applyDescriptionFormat("bold")}>B</button>
+              <button type="button" onClick={() => applyDescriptionFormat("italic")}>I</button>
+              <button type="button" onClick={() => applyDescriptionFormat("underline")}>U</button>
+              <button type="button" onClick={() => applyDescriptionFormat("h1")}>H1</button>
+              <button type="button" onClick={() => applyDescriptionFormat("list")}>List</button>
+              <button type="button" onClick={() => applyDescriptionFormat("link")}>Link</button>
+              <button type="button" onClick={() => applyDescriptionFormat("align")}>Align</button>
             </div>
             <textarea
+              ref={descriptionEditorRef}
               className="pe-editor"
               placeholder="Start typing..."
               value={form.description}
@@ -814,7 +887,7 @@ export default function AddProduct() {
                     checked={form.showInStartFirstOrder}
                     onChange={(e) => set("showInStartFirstOrder", e.target.checked)}
                   />
-                  Start your first order
+                  Hot Deals
                 </label>
                 <label className="pe-check">
                   <input

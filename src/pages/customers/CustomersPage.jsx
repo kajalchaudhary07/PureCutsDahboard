@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { MdSearch } from "react-icons/md";
-import { getUsers } from "../../firestoreService";
+import { toast } from "react-toastify";
+import { getUsersWithOrderCounts, updateUser } from "../../firestoreService";
 
 const SALES_STATUS = ["active", "closeone", "inactive"];
 
@@ -43,7 +44,7 @@ export default function CustomersPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const data = await getUsers();
+        const data = await getUsersWithOrderCounts();
         setUsers(data);
         setSalesStatusByUser(() =>
           Object.fromEntries(
@@ -54,7 +55,9 @@ export default function CustomersPage() {
             })
           )
         );
-      } catch {
+      } catch (e) {
+        console.error("Failed to load customers:", e);
+        toast.error("Failed to load customers");
         setUsers([]);
       } finally {
         setLoading(false);
@@ -76,8 +79,20 @@ export default function CustomersPage() {
     });
   }, [search, users]);
 
-  const setStatus = (userKey, status) => {
+  const setStatus = async (userKey, status) => {
     setSalesStatusByUser((prev) => ({ ...prev, [userKey]: status }));
+    try {
+      await updateUser(userKey, { salesStatus: status });
+      toast.success(`Sales status updated to ${status}`);
+    } catch (e) {
+      console.error("Failed to update sales status:", e);
+      toast.error("Failed to update sales status");
+      // Revert on error
+      setSalesStatusByUser((prev) => {
+        const user = users.find((u) => (u.id || u.uid) === userKey);
+        return { ...prev, [userKey]: user?.salesStatus || "active" };
+      });
+    }
   };
 
   return (
@@ -157,7 +172,7 @@ export default function CustomersPage() {
                       >
                         {SALES_STATUS.map((status) => (
                           <option key={status} value={status}>
-                            {status}
+                            {status.charAt(0).toUpperCase() + status.slice(1)}
                           </option>
                         ))}
                       </select>

@@ -8,7 +8,15 @@ import {
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { deleteOrder, getOrders, updateOrder } from "../../firestoreService";
 
-const ORDER_STATUS_OPTIONS = ["process", "conformerd", "packed", "dispatched"];
+const ORDER_STATUS_OPTIONS = [
+  "placed",
+  "confirmed",
+  "processing",
+  "packed",
+  "dispatched",
+  "delivered",
+  "cancelled",
+];
 
 const toDate = (value) => {
   if (!value) return null;
@@ -38,19 +46,23 @@ const getOrderRef = (order) => {
 };
 
 const getCustomer = (order) => {
+  const fallbackId = order.userId || order.uid || order.customerId || "";
+  const fallbackContact = order.customerPhone || order.phone || "";
   return {
     name:
       order.customerName ||
       order.customer?.name ||
       order.userName ||
       order.user?.name ||
-      "Unknown Customer",
+      fallbackId ||
+      "—",
     email:
       order.customerEmail ||
       order.customer?.email ||
       order.email ||
       order.user?.email ||
-      "-",
+      fallbackContact ||
+      "—",
   };
 };
 
@@ -75,29 +87,75 @@ const getAmount = (order) =>
 const getOrderDate = (order) =>
   order.createdAt || order.orderDate || order.date || order.placedAt || null;
 
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatInvoiceAmount = (value) => {
+  const amount = Number(value || 0);
+  if (Number.isNaN(amount)) return "₹0.00";
+  return `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
 const invoiceHtml = (order) => {
   const customer = getCustomer(order);
   const lines = Array.isArray(order.items) ? order.items : [];
   const orderRef = getOrderRef(order);
   const amount = getAmount(order);
+  const orderDate = formatDate(getOrderDate(order));
+
+  const normalizedLines = lines.map((line, idx) => {
+    const qty = Number(line.qty ?? line.quantity ?? 1) || 1;
+    const price = Number(line.price ?? line.unitPrice ?? 0) || 0;
+    const lineTotal = qty * price;
+    return {
+      index: idx + 1,
+      title: line.name || line.title || `Item ${idx + 1}`,
+      sku: line.productId || line.id || line.orderItemId || "",
+      qty,
+      price,
+      total: lineTotal,
+    };
+  });
+
+  const subtotal =
+    normalizedLines.length > 0
+      ? normalizedLines.reduce((sum, item) => sum + item.total, 0)
+      : amount;
+
+  const grandTotal = amount > 0 ? amount : subtotal;
+  const otherCharges = Math.max(0, grandTotal - subtotal);
 
   const rows =
-    lines.length > 0
-      ? lines
-          .map((line, idx) => {
-            const qty = Number(line.qty ?? line.quantity ?? 1);
-            const price = Number(line.price ?? line.unitPrice ?? 0);
-            const total = qty * price;
+    normalizedLines.length > 0
+      ? normalizedLines
+          .map((line) => {
             return `<tr>
-<td>${idx + 1}</td>
-<td>${line.name || line.title || "Item"}</td>
-<td>${qty}</td>
-<td>${price.toFixed(2)}</td>
-<td>${total.toFixed(2)}</td>
+<td class="text-center">${line.index}</td>
+<td>
+  <div class="item-title">${escapeHtml(line.title)}</div>
+  ${line.sku ? `<div class="item-sku">SKU: ${escapeHtml(line.sku)}</div>` : ""}
+</td>
+<td class="text-center">${line.qty}</td>
+<td class="text-right">${formatInvoiceAmount(line.price)}</td>
+<td class="text-right">${formatInvoiceAmount(line.total)}</td>
 </tr>`;
           })
           .join("")
-      : `<tr><td>1</td><td>Order Total</td><td>1</td><td>${amount.toFixed(2)}</td><td>${amount.toFixed(2)}</td></tr>`;
+      : `<tr>
+<td class="text-center">1</td>
+<td><div class="item-title">Order Total</div></td>
+<td class="text-center">1</td>
+<td class="text-right">${formatInvoiceAmount(grandTotal)}</td>
+<td class="text-right">${formatInvoiceAmount(grandTotal)}</td>
+</tr>`;
 
   return `<!doctype html>
 <html>
@@ -105,26 +163,117 @@ const invoiceHtml = (order) => {
 <meta charset="utf-8" />
 <title>Invoice ${orderRef}</title>
 <style>
-body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}
-h1{margin:0 0 8px}
-.meta{margin:0 0 20px;color:#475569}
-table{width:100%;border-collapse:collapse;margin-top:16px}
-th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}
-th{background:#f1f5f9}
-.total{margin-top:16px;font-size:18px;font-weight:700}
+*{box-sizing:border-box}
+body{
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+  background:#f4f7fb;
+  color:#0f172a;
+  margin:0;
+  padding:32px;
+}
+.invoice-shell{
+  max-width:980px;
+  margin:0 auto;
+  background:#ffffff;
+  border-radius:16px;
+  border:1px solid #e2e8f0;
+  box-shadow:0 12px 32px rgba(15,23,42,.08);
+  overflow:hidden;
+}
+.invoice-header{
+  padding:28px 32px;
+  background:linear-gradient(135deg,#0f172a 0%,#1d4ed8 100%);
+  color:#ffffff;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+}
+.brand{font-size:24px;font-weight:800;letter-spacing:.2px}
+.brand-sub{margin-top:4px;font-size:12px;opacity:.85;letter-spacing:.3px}
+.invoice-meta{text-align:right}
+.invoice-meta .label{font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.5px}
+.invoice-meta .value{font-size:20px;font-weight:800;margin-top:4px}
+.invoice-body{padding:28px 32px 32px}
+.grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-bottom:22px}
+.card{border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;background:#f8fafc}
+.card h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:#475569}
+.line{margin:4px 0;font-size:14px;color:#0f172a}
+.line.subtle{color:#64748b}
+table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid #dbe4ef;border-radius:12px;overflow:hidden}
+thead th{background:#eef4fb;color:#0f172a;font-size:12px;text-transform:uppercase;letter-spacing:.35px;padding:12px;border-bottom:1px solid #dbe4ef}
+tbody td{padding:12px;border-bottom:1px solid #edf2f7;vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+.item-title{font-size:14px;font-weight:600;color:#0f172a}
+.item-sku{margin-top:4px;font-size:12px;color:#64748b}
+.text-center{text-align:center}
+.text-right{text-align:right}
+.totals{margin-top:18px;display:flex;justify-content:flex-end}
+.totals-box{width:320px;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;background:#f8fafc}
+.totals-row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px;color:#334155}
+.totals-row.grand{margin-top:6px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:18px;font-weight:800;color:#0f172a}
+.note{margin-top:20px;font-size:12px;color:#64748b;line-height:1.55}
+@media print {
+  body{background:#fff;padding:0}
+  .invoice-shell{border:none;box-shadow:none;border-radius:0}
+}
 </style>
 </head>
 <body>
-<h1>Invoice ${orderRef}</h1>
-<p class="meta">Date: ${formatDate(getOrderDate(order))}</p>
-<p><strong>Customer:</strong> ${customer.name}<br/><strong>Email:</strong> ${customer.email}</p>
-<table>
-<thead>
-<tr><th>#</th><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
-</thead>
-<tbody>${rows}</tbody>
-</table>
-<p class="total">Grand Total: ${amount.toFixed(2)}</p>
+<section class="invoice-shell">
+  <header class="invoice-header">
+    <div>
+      <div class="brand">PureCuts</div>
+      <div class="brand-sub">PROFESSIONAL BEAUTY COMMERCE</div>
+    </div>
+    <div class="invoice-meta">
+      <div class="label">Invoice</div>
+      <div class="value">${escapeHtml(orderRef)}</div>
+      <div class="label" style="margin-top:10px">Date: ${escapeHtml(orderDate)}</div>
+    </div>
+  </header>
+
+  <div class="invoice-body">
+    <div class="grid">
+      <div class="card">
+        <h4>Billed To</h4>
+        <div class="line"><strong>${escapeHtml(customer.name)}</strong></div>
+        <div class="line subtle">${escapeHtml(customer.email)}</div>
+      </div>
+      <div class="card">
+        <h4>Order Summary</h4>
+        <div class="line">Order ID: <strong>${escapeHtml(orderRef)}</strong></div>
+        <div class="line">Items: <strong>${Math.max(1, getItemsCount(order))}</strong></div>
+        <div class="line">Status: <strong>${escapeHtml(normalizeStatus(order.orderStatus || order.status, "placed").toUpperCase())}</strong></div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:70px">#</th>
+          <th>Item</th>
+          <th style="width:80px" class="text-center">Qty</th>
+          <th style="width:160px" class="text-right">Unit Price</th>
+          <th style="width:170px" class="text-right">Line Total</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="totals">
+      <div class="totals-box">
+        <div class="totals-row"><span>Subtotal</span><strong>${formatInvoiceAmount(subtotal)}</strong></div>
+        ${otherCharges > 0 ? `<div class="totals-row"><span>Additional Charges</span><strong>${formatInvoiceAmount(otherCharges)}</strong></div>` : ""}
+        <div class="totals-row grand"><span>Grand Total</span><span>${formatInvoiceAmount(grandTotal)}</span></div>
+      </div>
+    </div>
+
+    <div class="note">
+      Thank you for your purchase. This invoice is computer generated and does not require a physical signature.
+    </div>
+  </div>
+</section>
 </body>
 </html>`;
 };
@@ -179,19 +328,19 @@ export default function OrdersList() {
   };
 
   const onChangeOrderStatus = async (order, nextStatus) => {
-    const previous = order.orderStatus || order.status || "process";
+    const previous = order.orderStatus || order.status || "placed";
 
     setOrders((prev) =>
-      prev.map((o) => (o.id === order.id ? { ...o, orderStatus: nextStatus } : o))
+      prev.map((o) => (o.id === order.id ? { ...o, orderStatus: nextStatus, status: nextStatus } : o))
     );
     setStatusSavingId(order.id);
 
     try {
-      await updateOrder(order.id, { orderStatus: nextStatus });
+      await updateOrder(order.id, { orderStatus: nextStatus, status: nextStatus });
       toast.success("Order status updated");
     } catch {
       setOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, orderStatus: previous } : o))
+        prev.map((o) => (o.id === order.id ? { ...o, orderStatus: previous, status: previous } : o))
       );
       toast.error("Failed to update order status");
     } finally {
@@ -270,7 +419,7 @@ export default function OrdersList() {
               <tbody>
                 {filtered.map((order, idx) => {
                   const customer = getCustomer(order);
-                  const orderStatus = normalizeStatus(order.orderStatus || order.status, "process");
+                  const orderStatus = normalizeStatus(order.orderStatus || order.status, "placed");
                   const paymentStatus = normalizeStatus(order.paymentStatus, "unpaid");
 
                   return (
@@ -288,7 +437,7 @@ export default function OrdersList() {
                       <td>
                         <select
                           className="order-status-select"
-                          value={ORDER_STATUS_OPTIONS.includes(orderStatus) ? orderStatus : "process"}
+                          value={ORDER_STATUS_OPTIONS.includes(orderStatus) ? orderStatus : "placed"}
                           disabled={statusSavingId === order.id}
                           onChange={(e) => onChangeOrderStatus(order, e.target.value)}
                         >

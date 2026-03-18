@@ -92,6 +92,97 @@ export const updateSubCategory = (id, data) =>
   updateItem("subCategories", id, data);
 export const deleteSubCategory = (id) => deleteItem("subCategories", id);
 
+// ─── Banners ─────────────────────────────────────────────────────────────────
+const toMillisSafe = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  if (typeof value?.toDate === "function") return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const VIDEO_EXT_RE = /\.(mp4|mov|m4v|webm|ogv|m3u8)(\?|#|$)/i;
+
+const isVideoLike = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return false;
+  if (raw.startsWith("data:video/")) return true;
+  return VIDEO_EXT_RE.test(raw);
+};
+
+const inferBannerMediaType = (raw = {}) => {
+  const explicit = String(raw.mediaType || "").trim().toLowerCase();
+  if (explicit === "video" || explicit === "image") return explicit;
+  return isVideoLike(raw.mediaUrl || raw.video || raw.image || raw.imageUrl)
+    ? "video"
+    : "image";
+};
+
+const normalizeBanner = (raw = {}) => {
+  const mediaUrl = String(
+    raw.mediaUrl || raw.video || raw.image || raw.imageUrl || ""
+  ).trim();
+  const mediaType = inferBannerMediaType(raw);
+
+  return {
+    ...raw,
+    title: String(raw.title || "").trim(),
+    mediaUrl,
+    mediaType,
+    image: mediaUrl,
+    link: String(raw.link || "/products").trim() || "/products",
+    active: raw.active !== false,
+  };
+};
+
+export const getBanners = async () => {
+  let rows = [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, "banners"), orderBy("createdAt", "desc"))
+    );
+    rows = snap.docs.map((d) => normalizeBanner({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "banners"));
+    rows = snap.docs.map((d) => normalizeBanner({ id: d.id, ...d.data() }));
+    rows.sort(
+      (a, b) =>
+        toMillisSafe(b.createdAt || b.updatedAt) -
+        toMillisSafe(a.createdAt || a.updatedAt)
+    );
+  }
+  return rows;
+};
+
+export const addBanner = (data) =>
+  addItem("banners", {
+    ...normalizeBanner(data),
+  });
+
+export const updateBanner = (id, data) =>
+  updateItem("banners", id, {
+    ...data,
+    ...(data.title !== undefined ? { title: String(data.title || "").trim() } : {}),
+    ...(data.image !== undefined || data.mediaUrl !== undefined
+      ? {
+          mediaUrl: String(data.mediaUrl ?? data.image ?? "").trim(),
+          image: String(data.mediaUrl ?? data.image ?? "").trim(),
+          mediaType: inferBannerMediaType(data),
+        }
+      : {}),
+    ...(data.link !== undefined
+      ? { link: String(data.link || "/products").trim() || "/products" }
+      : {}),
+    ...(data.active !== undefined ? { active: data.active !== false } : {}),
+  });
+
+export const deleteBanner = (id) => deleteItem("banners", id);
+
+export const toggleBannerStatus = (id, active) =>
+  updateBanner(id, { active: !Boolean(active) });
+
 // ─── Product Reviews ──────────────────────────────────────────────────────────
 const REVIEW_COLLECTIONS = ["productReviews", "reviews"];
 const REVIEW_UPDATE_META_KEYS = new Set([
@@ -367,15 +458,162 @@ export const deleteProductReview = async (
 };
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
+const normalizeOrder = (raw = {}) => {
+  const items = Array.isArray(raw.items) ? raw.items : [];
+  const normalizedItems = items.map((item, index) => {
+    const productId = String(item?.productId || item?.id || "").trim();
+    const quantity = Number(item?.quantity ?? item?.qty ?? 1) || 1;
+    return {
+      ...item,
+      productId,
+      quantity,
+      orderItemId:
+        item?.orderItemId ||
+        `${String(raw.orderId || raw.orderRef || raw.id || "ORDER")}-I${String(index + 1).padStart(2, "0")}`,
+    };
+  });
+
+  const derivedOrderRef =
+    raw.orderId ||
+    raw.orderRef ||
+    raw.orderNumber ||
+    raw.code ||
+    raw.number ||
+    raw.id ||
+    "";
+
+  const totalItems =
+    Number(raw.totalItems) ||
+    normalizedItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+
+  const itemCount =
+    Number(raw.itemCount) || Number(raw.itemsCount) || normalizedItems.length;
+
+  const amount = Number(
+    raw.amount ?? raw.total ?? raw.totalAmount ?? raw.grandTotal ?? raw.payableAmount ?? 0
+  );
+
+  const orderStatus = String(raw.orderStatus || raw.status || "placed")
+    .trim()
+    .toLowerCase();
+
+  const paymentStatus = String(raw.paymentStatus || "pending")
+    .trim()
+    .toLowerCase();
+
+  return {
+    ...raw,
+    items: normalizedItems,
+    orderId: derivedOrderRef,
+    orderRef: derivedOrderRef,
+    orderNumber: raw.orderNumber || derivedOrderRef,
+    itemCount,
+    itemsCount: itemCount,
+    totalItems,
+    amount,
+    total: Number(raw.total ?? amount),
+    totalAmount: Number(raw.totalAmount ?? amount),
+    grandTotal: Number(raw.grandTotal ?? amount),
+    orderStatus,
+    status: orderStatus,
+    paymentStatus,
+  };
+};
+
+const resolveOrderOwnerId = (order = {}) => {
+  const candidates = [
+    order.userId,
+    order.uid,
+    order.customerId,
+    order.userUid,
+    order.user?.id,
+    order.user?.uid,
+    order.customer?.id,
+    order.customer?.uid,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+  return "";
+};
+
+const hydrateOrdersWithCustomerProfile = async (orders) => {
+  const ownerIds = Array.from(
+    new Set(
+      orders
+        .map((order) => resolveOrderOwnerId(order))
+        .filter((id) => id)
+    )
+  );
+
+  if (ownerIds.length === 0) {
+    return orders.map((order) => normalizeOrder(order));
+  }
+
+  const userEntries = await Promise.all(
+    ownerIds.map(async (uid) => {
+      try {
+        const snap = await getDoc(doc(db, "users", uid));
+        if (!snap.exists()) return [uid, null];
+        return [uid, snap.data()];
+      } catch {
+        return [uid, null];
+      }
+    })
+  );
+
+  const userMap = Object.fromEntries(userEntries);
+
+  return orders.map((order) => {
+    const ownerId = resolveOrderOwnerId(order);
+    const profile = userMap[ownerId] || {};
+
+    const enriched = {
+      ...order,
+      customerName:
+        order.customerName ||
+        order.customer?.name ||
+        order.userName ||
+        profile.name ||
+        profile.ownerName ||
+        "",
+      customerEmail:
+        order.customerEmail ||
+        order.customer?.email ||
+        order.email ||
+        profile.email ||
+        "",
+      customerPhone:
+        order.customerPhone ||
+        order.phone ||
+        profile.phone ||
+        profile.mobile ||
+        "",
+      phone:
+        order.phone ||
+        order.customerPhone ||
+        profile.phone ||
+        profile.mobile ||
+        "",
+    };
+
+    return normalizeOrder(enriched);
+  });
+};
+
 export const getOrders = async () => {
   try {
     const snap = await getDocs(
       query(collection(db, "orders"), orderBy("createdAt", "desc"))
     );
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const rawOrders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return await hydrateOrdersWithCustomerProfile(rawOrders);
   } catch {
     const snap = await getDocs(collection(db, "orders"));
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const rawOrders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return await hydrateOrdersWithCustomerProfile(rawOrders);
   }
 };
 
@@ -468,6 +706,74 @@ export const createOrderNotification = async ({
 export const getUsers = async () => {
   const snap = await getDocs(collection(db, "users"));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+};
+
+export const updateUser = (id, data) => updateItem("users", id, data);
+
+// ─── Customers (Users with Orders) ─────────────────────────────────────────────
+
+const resolveOrderUserId = (order = {}) => {
+  const direct = [
+    order.userId,
+    order.uid,
+    order.customerId,
+    order.userUid,
+    order.user?.id,
+    order.user?.uid,
+    order.customer?.id,
+    order.customer?.uid,
+  ];
+
+  for (const candidate of direct) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+  return "";
+};
+
+/**
+ * Fetches only customers who have placed at least one order
+ * Automatically excludes admin/staff users (they won't have orders)
+ * Returns users with accurate order counts
+ */
+export const getUsersWithOrderCounts = async () => {
+  // Fetch all orders from the orders collection
+  const ordersSnap = await getDocs(collection(db, "orders"));
+  const allOrders = ordersSnap.docs.map((d) => d.data());
+  
+  // Extract unique user IDs from orders (only customers who have ordered)
+  const orderingUserIds = new Set(
+    allOrders
+      .map((order) => resolveOrderUserId(order))
+      .filter((userId) => userId && typeof userId === "string" && userId.trim())
+  );
+
+  if (orderingUserIds.size === 0) {
+    return [];
+  }
+
+  // Fetch all users
+  const usersSnap = await getDocs(collection(db, "users"));
+  const allUsers = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // Build order count map in one pass
+  const orderCountMap = {};
+  allOrders.forEach((order) => {
+    const userId = resolveOrderUserId(order);
+    if (userId) {
+      orderCountMap[userId] = (orderCountMap[userId] || 0) + 1;
+    }
+  });
+
+  // Filter to only users who have ordered and attach their order counts
+  const customersWithOrders = allUsers
+    .filter((user) => orderingUserIds.has(user.id || user.uid))
+    .map((user) => ({
+      ...user,
+      ordersCount: orderCountMap[user.id || user.uid] || 0,
+    }));
+
+  return customersWithOrders;
 };
 
 const chunk = (arr, size) => {
