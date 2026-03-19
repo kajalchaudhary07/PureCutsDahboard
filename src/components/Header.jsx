@@ -13,6 +13,7 @@ const titles = {
   "/units":          "Units",
   "/customers":      "Customers",
   "/orders":         "Orders",
+  "/order-details":  "Order Details",
   "/product-reviews": "Product Reviews",
   "/banners":        "Banners",
   "/coupons":        "Coupons",
@@ -26,6 +27,7 @@ const titles = {
 
 function getTitle(pathname) {
   if (pathname.startsWith("/products/edit/")) return "Edit Product";
+  if (pathname.startsWith("/order-details/")) return "Order Details";
   return titles[pathname] || "Dashboard";
 }
 

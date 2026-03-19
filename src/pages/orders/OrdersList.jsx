@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
   MdDelete,
@@ -426,7 +427,11 @@ export default function OrdersList() {
                     <tr key={order.id}>
                       <td><input type="checkbox" aria-label={`select ${idx + 1}`} /></td>
                       <td className="text-muted">{idx + 1}</td>
-                      <td><span className="order-link">[{getOrderRef(order)}]</span></td>
+                      <td>
+                        <Link to={`/order-details/${order.id}`} className="order-link">
+                          [{getOrderRef(order)}]
+                        </Link>
+                      </td>
                       <td>
                         <div className="font-medium">{customer.name}</div>
                         <div className="text-muted" style={{ fontSize: 12 }}>{customer.email}</div>

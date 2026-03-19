@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import { MdAdd, MdDelete, MdImage, MdVideocam } from "react-icons/md";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { storage } from "../../firebaseConfig";
 import {
   addBanner,
   deleteBanner,
@@ -34,7 +36,20 @@ export default function BannersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState("");
+  const [mediaType, setMediaType] = useState("image");
   const [mediaUrl, setMediaUrl] = useState("");
+  const [link, setLink] = useState("");
+  const [mediaFile, setMediaFile] = useState(null);
+  const [mediaPreview, setMediaPreview] = useState("");
+  const mediaInputRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (mediaPreview?.startsWith("blob:")) {
+        URL.revokeObjectURL(mediaPreview);
+      }
+    };
+  }, [mediaPreview]);
 
   const activeCount = useMemo(() => banners.filter((banner) => banner.active).length, [banners]);
 
@@ -54,23 +69,75 @@ export default function BannersPage() {
     load();
   }, []);
 
+  const handleMediaFileChange = (event) => {
+    const picked = event.target.files?.[0];
+    if (!picked) return;
+
+    if (!picked.type.startsWith("image/") && !picked.type.startsWith("video/")) {
+      toast.error("Please choose an image or video file");
+      event.target.value = "";
+      return;
+    }
+
+    if (mediaPreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(mediaPreview);
+    }
+
+    setMediaFile(picked);
+    setMediaType(picked.type.startsWith("video/") ? "video" : "image");
+    setMediaUrl("");
+    setMediaPreview(URL.createObjectURL(picked));
+  };
+
+  const uploadBannerMedia = async () => {
+    if (!mediaFile) return mediaUrl.trim();
+    const safeName = String(mediaFile.name || "banner_media")
+      .replace(/\s+/g, "_")
+      .replace(/[^a-zA-Z0-9._-]/g, "");
+
+    const storageRef = ref(storage, `banners/${Date.now()}_${safeName}`);
+    return new Promise((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef, mediaFile);
+      task.on(
+        "state_changed",
+        null,
+        reject,
+        () => getDownloadURL(task.snapshot.ref).then(resolve).catch(reject)
+      );
+    });
+  };
+
   const onAddBanner = async (event) => {
     event.preventDefault();
-    if (!title.trim() || !mediaUrl.trim()) {
-      toast.error("Title and media URL are required");
+    if (!title.trim() || !link.trim()) {
+      toast.error("Title and link are required");
+      return;
+    }
+    if (!mediaFile && !mediaUrl.trim()) {
+      toast.error("Please upload media from your system or provide media URL");
       return;
     }
 
     setSaving(true);
     try {
+      const uploadedMediaUrl = await uploadBannerMedia();
       await addBanner({
         title: title.trim(),
-        mediaUrl: mediaUrl.trim(),
-        link: "/products",
+        mediaType,
+        mediaUrl: uploadedMediaUrl,
+        link: link.trim(),
         active: true,
       });
       setTitle("");
+      setMediaType("image");
       setMediaUrl("");
+      setLink("");
+      setMediaFile(null);
+      if (mediaPreview?.startsWith("blob:")) {
+        URL.revokeObjectURL(mediaPreview);
+      }
+      setMediaPreview("");
+      if (mediaInputRef.current) mediaInputRef.current.value = "";
       await load();
       toast.success("Banner added");
     } catch (e) {
@@ -123,8 +190,56 @@ export default function BannersPage() {
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Festival offer" required />
             </div>
             <div className="form-group">
-              <label>Media URL (Image or Video) *</label>
-              <input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} placeholder="https://..." required />
+              <label>Media Type *</label>
+              <select value={mediaType} onChange={(e) => setMediaType(e.target.value)} required>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Upload Media from System *</label>
+              <div className="img-upload" onClick={() => mediaInputRef.current?.click()}>
+                <input
+                  ref={mediaInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={handleMediaFileChange}
+                />
+                {mediaPreview ? (
+                  mediaType === "video" ? (
+                    <video src={mediaPreview} className="img-preview" muted playsInline />
+                  ) : (
+                    <img src={mediaPreview} className="img-preview" alt="preview" />
+                  )
+                ) : mediaType === "video" ? (
+                  <MdVideocam style={{ fontSize: 36, color: "var(--text-secondary)" }} />
+                ) : (
+                  <MdImage style={{ fontSize: 36, color: "var(--text-secondary)" }} />
+                )}
+                <div className="img-upload-label"><span>Choose file from device</span></div>
+              </div>
+              <input
+                value={!mediaFile ? mediaUrl : ""}
+                onChange={(e) => {
+                  setMediaFile(null);
+                  if (mediaPreview?.startsWith("blob:")) {
+                    URL.revokeObjectURL(mediaPreview);
+                  }
+                  setMediaPreview("");
+                  setMediaUrl(e.target.value);
+                }}
+                placeholder="Or paste media URL (optional)"
+                style={{ marginTop: 8 }}
+              />
+            </div>
+            <div className="form-group">
+              <label>Banner Link *</label>
+              <input
+                value={link}
+                onChange={(e) => setLink(e.target.value)}
+                placeholder="/products or https://example.com/page"
+                required
+              />
             </div>
             <div className="form-footer">
               <button className="btn btn-primary" type="submit" disabled={saving}>
@@ -177,7 +292,13 @@ export default function BannersPage() {
                 <div>
                   <h4>{banner.title}</h4>
                   <p>{isVideoBanner(banner) ? "Video Banner" : "Image Banner"}</p>
-                  <p>{banner.link}</p>
+                  {banner.link ? (
+                    <p>
+                      <a href={banner.link} target="_blank" rel="noreferrer">
+                        {banner.link}
+                      </a>
+                    </p>
+                  ) : null}
                 </div>
                 <div className="banner-actions">
                   <button

@@ -1,77 +1,24 @@
-import { useMemo, useState } from "react";
-import { MdAttachFile, MdCircle, MdSearch, MdSend } from "react-icons/md";
-
-const INITIAL_THREADS = [
-  {
-    id: "th-101",
-    customer: "Rahul Sharma",
-    email: "rahul.sharma@example.com",
-    avatar: "RS",
-    status: "online",
-    unread: 2,
-    lastSeen: "Typing...",
-    messages: [
-      {
-        id: "m-1",
-        from: "customer",
-        text: "Hi, can you share delivery timeline for order #PC-3421?",
-        time: "10:11 AM",
-      },
-      {
-        id: "m-2",
-        from: "admin",
-        text: "Sure Rahul. It is packed and should be dispatched by tonight.",
-        time: "10:14 AM",
-      },
-      {
-        id: "m-3",
-        from: "customer",
-        text: "Perfect, thank you.",
-        time: "10:15 AM",
-      },
-    ],
-  },
-  {
-    id: "th-102",
-    customer: "Ayesha Khan",
-    email: "ayesha.k@example.com",
-    avatar: "AK",
-    status: "away",
-    unread: 0,
-    lastSeen: "Today, 09:34 AM",
-    messages: [
-      {
-        id: "m-1",
-        from: "customer",
-        text: "Need help choosing the right beard wax for sensitive skin.",
-        time: "09:30 AM",
-      },
-      {
-        id: "m-2",
-        from: "admin",
-        text: "I recommend our aloe variant. It has no artificial fragrance.",
-        time: "09:34 AM",
-      },
-    ],
-  },
-  {
-    id: "th-103",
-    customer: "Vikram Patel",
-    email: "vikram.patel@example.com",
-    avatar: "VP",
-    status: "offline",
-    unread: 1,
-    lastSeen: "Yesterday, 08:10 PM",
-    messages: [
-      {
-        id: "m-1",
-        from: "customer",
-        text: "Can I return an opened product if it causes irritation?",
-        time: "08:02 PM",
-      },
-    ],
-  },
-];
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
+import {
+  MdCircle,
+  MdErrorOutline,
+  MdRefresh,
+  MdSearch,
+  MdSend,
+} from "react-icons/md";
+import { db } from "../../firebaseConfig";
+import { useAuth } from "../../auth/AuthProvider";
 
 const statusClass = {
   online: "is-online",
@@ -80,53 +27,249 @@ const statusClass = {
 };
 
 export default function ChatPage() {
-  const [threads, setThreads] = useState(INITIAL_THREADS);
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(INITIAL_THREADS[0].id);
+  const { user } = useAuth();
+  const [threads, setThreads] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState("");
+  const [loadingThreads, setLoadingThreads] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [messages, setMessages] = useState([]);
+  const messageListRef = useRef(null);
+
+  const toMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toMillis === "function") return value.toMillis();
+    if (typeof value?.toDate === "function") return value.toDate().getTime();
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    const parsed = Date.parse(String(value));
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const formatTime = (value) => {
+    const ms = toMillis(value);
+    if (!ms) return "";
+    return new Date(ms).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatThreadTime = (value) => {
+    const ms = toMillis(value);
+    if (!ms) return "";
+    const date = new Date(ms);
+    const now = new Date();
+    const sameDay = date.toDateString() === now.toDateString();
+    if (sameDay) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+    return date.toLocaleDateString([], { day: "2-digit", month: "short" });
+  };
+
+  const avatarFrom = (name, email) => {
+    const source = String(name || email || "User").trim();
+    const chunks = source.split(/\s+/).filter(Boolean);
+    if (chunks.length >= 2) {
+      return `${chunks[0][0] || ""}${chunks[1][0] || ""}`.toUpperCase();
+    }
+    return source.slice(0, 2).toUpperCase();
+  };
+
+  const resolveMessageTime = (data = {}) => {
+    return data.serverTimestamp || data.timestamp || data.createdAt || null;
+  };
+
+  useEffect(() => {
+    setLoadingThreads(true);
+    const chatsQuery = query(
+      collection(db, "chats"),
+      orderBy("updatedAt", "desc")
+    );
+
+    const unsub = onSnapshot(
+      chatsQuery,
+      (snap) => {
+        const nextThreads = snap.docs.map((d) => {
+          const data = d.data() || {};
+          const userName = String(data.userName || data.customerName || "Customer").trim();
+          const userEmail = String(data.userEmail || "").trim();
+          const status = toMillis(data.lastTimestamp) > 0 ? "online" : "offline";
+
+          return {
+            id: d.id,
+            chatId: d.id,
+            customer: userName || "Customer",
+            email: userEmail,
+            avatar: avatarFrom(userName, userEmail),
+            status,
+            unread: Number(data.unreadForAdmin || 0),
+            lastSeen: formatThreadTime(
+              data.lastServerTimestamp || data.lastTimestamp || data.updatedAt
+            ),
+            latest: String(data.lastMessage || "No messages yet"),
+          };
+        });
+
+        setThreads(nextThreads);
+        setLoadingThreads(false);
+        setError("");
+
+        setSelectedId((prev) => {
+          if (prev && nextThreads.some((t) => t.id === prev)) return prev;
+          return nextThreads[0]?.id || "";
+        });
+      },
+      (err) => {
+        setLoadingThreads(false);
+        setError(err?.message || "Could not load chats.");
+      }
+    );
+
+    return () => unsub();
+  }, []);
 
   const filteredThreads = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
     if (!q) return threads;
     return threads.filter((thread) => {
-      const latest = thread.messages[thread.messages.length - 1]?.text || "";
+      const latest = String(thread.latest || "");
       return (
         thread.customer.toLowerCase().includes(q) ||
         thread.email.toLowerCase().includes(q) ||
         latest.toLowerCase().includes(q)
       );
     });
-  }, [query, threads]);
+  }, [searchQuery, threads]);
 
   const activeThread =
     threads.find((thread) => thread.id === selectedId) || filteredThreads[0] || null;
 
-  const sendMessage = () => {
-    const message = draft.trim();
-    if (!message || !activeThread) return;
+  useEffect(() => {
+    if (!activeThread?.chatId) {
+      setMessages([]);
+      return;
+    }
 
-    setThreads((prev) =>
-      prev.map((thread) => {
-        if (thread.id !== activeThread.id) return thread;
-        return {
-          ...thread,
-          lastSeen: "Just now",
-          messages: [
-            ...thread.messages,
-            {
-              id: `m-${thread.messages.length + 1}`,
-              from: "admin",
-              text: message,
-              time: new Date().toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            },
-          ],
-        };
-      })
+    setLoadingMessages(true);
+    const messagesQuery = query(
+      collection(db, "chats", activeThread.chatId, "messages"),
+      orderBy("timestamp", "asc")
     );
-    setDraft("");
+
+    const unsub = onSnapshot(
+      messagesQuery,
+      async (snap) => {
+        const nextMessages = snap.docs.map((d) => {
+          const data = d.data() || {};
+          const resolvedTime = resolveMessageTime(data);
+          const senderRole = String(data.senderRole || "").toLowerCase();
+          const senderId = String(data.senderId || "").trim();
+          const from = senderRole === "admin" || senderId === user?.uid ? "admin" : "customer";
+
+          return {
+            id: d.id,
+            from,
+            senderRole,
+            senderId,
+            seen: data.seen === true,
+            text: String(data.text || data.message || "").trim(),
+            time: formatTime(resolvedTime),
+            _sortMs: toMillis(resolvedTime),
+            _raw: data,
+          };
+        }).sort((a, b) => {
+          if (a._sortMs === b._sortMs) return a.id.localeCompare(b.id);
+          return a._sortMs - b._sortMs;
+        });
+
+        setMessages(nextMessages);
+        setLoadingMessages(false);
+
+        const unseenCustomerDocs = snap.docs.filter((docSnap) => {
+          const data = docSnap.data() || {};
+          const senderRole = String(data.senderRole || "").toLowerCase();
+          const senderId = String(data.senderId || "").trim();
+          return senderRole === "user" && senderId !== user?.uid && data.seen !== true;
+        });
+
+        if (unseenCustomerDocs.length > 0) {
+          try {
+            const batch = writeBatch(db);
+            unseenCustomerDocs.forEach((docSnap) => {
+              batch.update(docSnap.ref, {
+                seen: true,
+                seenAt: serverTimestamp(),
+              });
+            });
+            batch.update(doc(db, "chats", activeThread.chatId), {
+              unreadForAdmin: 0,
+              updatedAt: serverTimestamp(),
+            });
+            await batch.commit();
+          } catch {
+            // Non-blocking: unread badge will sync on next successful update.
+          }
+        }
+      },
+      (err) => {
+        setLoadingMessages(false);
+        setError(err?.message || "Could not load messages.");
+      }
+    );
+
+    return () => unsub();
+  }, [activeThread?.chatId, user?.uid]);
+
+  useEffect(() => {
+    if (!messageListRef.current) return;
+    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+  }, [messages]);
+
+  const refreshChats = () => {
+    setError("");
+    setLoadingThreads(true);
+    setTimeout(() => setLoadingThreads(false), 250);
+  };
+
+  const sendMessage = async () => {
+    const message = draft.trim();
+    if (!message || !activeThread?.chatId || !user?.uid || sending) return;
+
+    setSending(true);
+    setError("");
+    try {
+      const localNow = new Date();
+      await addDoc(collection(db, "chats", activeThread.chatId, "messages"), {
+        chatId: activeThread.chatId,
+        senderId: user.uid,
+        senderRole: "admin",
+        text: message,
+        message,
+        seen: false,
+        timestamp: localNow,
+        serverTimestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      });
+
+      await updateDoc(doc(db, "chats", activeThread.chatId), {
+        lastMessage: message,
+        lastMessageBy: user.uid,
+        lastTimestamp: localNow,
+        lastServerTimestamp: serverTimestamp(),
+        unreadForUser: 1,
+        updatedAt: serverTimestamp(),
+      });
+
+      setDraft("");
+    } catch (err) {
+      setError(err?.message || "Failed to send message.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -136,7 +279,17 @@ export default function ChatPage() {
           <h2>Customer Chat</h2>
           <div className="breadcrumb">Home / <span>Chat</span></div>
         </div>
+        <button type="button" className="btn btn-outline" onClick={refreshChats}>
+          <MdRefresh /> Refresh
+        </button>
       </div>
+
+      {error ? (
+        <div className="card chat-error-banner">
+          <MdErrorOutline />
+          <span>{error}</span>
+        </div>
+      ) : null}
 
       <div className="chat-layout">
         <aside className="card chat-thread-pane">
@@ -149,18 +302,20 @@ export default function ChatPage() {
             <MdSearch />
             <input
               className="search-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search customer or message"
             />
           </div>
 
           <div className="chat-thread-list">
-            {filteredThreads.length === 0 ? (
+            {loadingThreads ? (
+              <div className="empty-state chat-empty">Loading conversations…</div>
+            ) : filteredThreads.length === 0 ? (
               <div className="empty-state chat-empty">No conversations found.</div>
             ) : (
               filteredThreads.map((thread) => {
-                const latest = thread.messages[thread.messages.length - 1]?.text || "No messages yet";
+                const latest = thread.latest || "No messages yet";
                 const isActive = activeThread?.id === thread.id;
                 return (
                   <button
@@ -169,11 +324,6 @@ export default function ChatPage() {
                     className={`chat-thread-item${isActive ? " active" : ""}`}
                     onClick={() => {
                       setSelectedId(thread.id);
-                      setThreads((prev) =>
-                        prev.map((item) =>
-                          item.id === thread.id ? { ...item, unread: 0 } : item
-                        )
-                      );
                     }}
                   >
                     <div className="chat-avatar">{thread.avatar}</div>
@@ -212,11 +362,15 @@ export default function ChatPage() {
                     </div>
                   </div>
                 </div>
-                <button type="button" className="btn btn-outline">View Profile</button>
+                <span className="chat-thread-id">{activeThread.chatId}</span>
               </div>
 
-              <div className="chat-message-list">
-                {activeThread.messages.map((message) => (
+              <div className="chat-message-list" ref={messageListRef}>
+                {loadingMessages ? (
+                  <div className="empty-state">Loading messages…</div>
+                ) : messages.length === 0 ? (
+                  <div className="empty-state">No messages yet. Start the conversation.</div>
+                ) : messages.map((message) => (
                   <div
                     key={message.id}
                     className={`chat-bubble-row ${message.from === "admin" ? "from-admin" : "from-customer"}`}
@@ -230,9 +384,6 @@ export default function ChatPage() {
               </div>
 
               <div className="chat-compose-row">
-                <button type="button" className="chat-icon-btn" title="Attach">
-                  <MdAttachFile />
-                </button>
                 <input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -241,8 +392,13 @@ export default function ChatPage() {
                   }}
                   placeholder="Write a message"
                 />
-                <button type="button" className="btn btn-primary" onClick={sendMessage}>
-                  <MdSend /> Send
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={sendMessage}
+                  disabled={sending || !draft.trim()}
+                >
+                  <MdSend /> {sending ? "Sending..." : "Send"}
                 </button>
               </div>
             </>

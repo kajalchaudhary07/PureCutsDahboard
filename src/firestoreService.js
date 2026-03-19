@@ -617,6 +617,20 @@ export const getOrders = async () => {
   }
 };
 
+export const getOrderById = async (id) => {
+  const orderId = String(id || "").trim();
+  if (!orderId) throw new Error("Order id is required");
+
+  const snap = await getDoc(doc(db, "orders", orderId));
+  if (!snap.exists()) return null;
+
+  const [hydrated] = await hydrateOrdersWithCustomerProfile([
+    { id: snap.id, ...snap.data() },
+  ]);
+
+  return hydrated || null;
+};
+
 export const addOrder = (data) => addItem("orders", data);
 export const updateOrder = (id, data) => updateItem("orders", id, data);
 export const deleteOrder = (id) => deleteItem("orders", id);

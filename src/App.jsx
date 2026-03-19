@@ -15,6 +15,7 @@ import ProductReviews from "./pages/reviews/ProductReviews";
 import AdminManagement from "./pages/admin/AdminManagement";
 import RolesManagement from "./pages/roles/RolesManagement";
 import OrdersList from "./pages/orders/OrdersList";
+import OrderDetailsPage from "./pages/orders/OrderDetailsPage";
 import NotificationsPage from "./pages/notifications/NotificationsPage";
 import ChatPage from "./pages/chat/ChatPage";
 import DashboardPage from "./pages/dashboard/DashboardPage";
@@ -51,6 +52,8 @@ export default function App() {
               <Route path="units" element={<UnitsPage />} />
               <Route path="customers" element={<CustomersPage />} />
               <Route path="orders" element={<OrdersList />} />
+              <Route path="order-details" element={<OrderDetailsPage />} />
+              <Route path="order-details/:id" element={<OrderDetailsPage />} />
               <Route path="product-reviews" element={<ProductReviews />} />
               <Route path="banners" element={<BannersPage />} />
               <Route path="coupons" element={<CouponsPage />} />
