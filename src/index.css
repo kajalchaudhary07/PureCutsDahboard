@@ -3107,6 +3107,24 @@ input:checked + .slider::before { transform: translateX(18px); }
   flex-wrap: wrap;
 }
 
+.pe-category-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pe-category-controls .pe-scroll-select {
+  margin-bottom: 0;
+}
+
+.pe-category-controls .pe-inline-add {
+  margin-top: 0;
+}
+
+.pe-category-controls .text-muted {
+  margin: 0;
+}
+
 .pe-tag-input-row {
   display: flex;
   gap: 10px;

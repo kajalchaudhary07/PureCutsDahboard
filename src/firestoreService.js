@@ -92,6 +92,13 @@ export const updateSubCategory = (id, data) =>
   updateItem("subCategories", id, data);
 export const deleteSubCategory = (id) => deleteItem("subCategories", id);
 
+// ─── Sub-Sub-Categories ───────────────────────────────────────────────────────
+export const getSubSubCategories = () => getAll("subSubCategories");
+export const addSubSubCategory = (data) => addItem("subSubCategories", data);
+export const updateSubSubCategory = (id, data) =>
+  updateItem("subSubCategories", id, data);
+export const deleteSubSubCategory = (id) => deleteItem("subSubCategories", id);
+
 // ─── Banners ─────────────────────────────────────────────────────────────────
 const toMillisSafe = (value) => {
   if (!value) return 0;

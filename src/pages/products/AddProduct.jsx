@@ -22,6 +22,7 @@ import { getBrands, addBrand } from "../../firestoreService";
 import { getCategories } from "../../firestoreService";
 import {
   getSubCategories,
+  getSubSubCategories,
   addSubCategory,
   createVariant,
   getProductVariants,
@@ -33,7 +34,7 @@ import { storage } from "../../firebaseConfig";
 
 const empty = {
   name: "", brand: "", category: "", price: "", originalPrice: "",
-  subCategory: "", rating: "", reviews: "", image: "", tag: "", size: "",
+  subCategory: "", subSubCategory: "", rating: "", reviews: "", image: "", tag: "", size: "",
   deliveryTime: "15 MINS", isPopular: false, isRecommended: false, stock: "",
   showInStartFirstOrder: false,
   showInRecommendedSalon: false,
@@ -64,6 +65,7 @@ export default function AddProduct() {
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
+  const [subSubCategories, setSubSubCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -76,7 +78,6 @@ export default function AddProduct() {
   const [chosenAttrValues, setChosenAttrValues] = useState([]);
   const [tagInput, setTagInput] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryParent, setNewCategoryParent] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
   const [variantRows, setVariantRows] = useState([]);
   const [existingVariantIds, setExistingVariantIds] = useState([]);
@@ -110,6 +111,7 @@ export default function AddProduct() {
     getBrands().then(setBrands);
     getCategories().then(setCategories);
     getSubCategories().then(setSubCategories);
+    getSubSubCategories().then(setSubSubCategories);
     if (isEdit) {
       getProducts().then((all) => {
         const found = all.find((p) => p.id === id);
@@ -138,6 +140,11 @@ export default function AddProduct() {
             ...empty,
             ...found,
             subCategory: found.subCategory || found.subcategory || found.sub_category || "",
+            subSubCategory:
+              found.subSubCategory ||
+              found.subsubCategory ||
+              found.sub_sub_category ||
+              "",
             image: found.image || found.imageUrl || "",
             visibility: found.visibility || "publish",
             productType: found.productType || "single",
@@ -200,9 +207,22 @@ export default function AddProduct() {
     if (!form.category) return;
     const selected = subCategories.find((s) => s.name === form.subCategory);
     if (!selected) {
-      setForm((f) => ({ ...f, subCategory: "" }));
+      setForm((f) => ({ ...f, subCategory: "", subSubCategory: "" }));
     }
   }, [form.category, form.subCategory, subCategories]);
+
+  useEffect(() => {
+    if (!form.subCategory) return;
+    const selected = subSubCategories.find(
+      (s) =>
+        s.name === form.subSubCategory &&
+        (s.parentCategory || "") === (form.category || "") &&
+        (s.parentSubCategory || "") === (form.subCategory || "")
+    );
+    if (!selected) {
+      setForm((f) => ({ ...f, subSubCategory: "" }));
+    }
+  }, [form.category, form.subCategory, form.subSubCategory, subSubCategories]);
 
   useEffect(() => {
     setVariantRows((prev) => deriveVariantRows(prev));
@@ -302,7 +322,7 @@ export default function AddProduct() {
 
   const createCategory = async () => {
     const name = newCategoryName.trim();
-    const parent = (newCategoryParent || form.category || "").trim();
+    const parent = (form.category || "").trim();
 
     if (!name) {
       toast.error("Sub-category name is required");
@@ -334,7 +354,6 @@ export default function AddProduct() {
       set("category", parent);
       set("subCategory", name);
       setNewCategoryName("");
-      setNewCategoryParent("");
       toast.success("Sub-category added");
     } catch {
       toast.error("Failed to add sub-category");
@@ -669,6 +688,14 @@ export default function AddProduct() {
         selectedCategories: form.selectedCategories || [],
         subCategory: form.subCategory || "",
         subcategory: form.subCategory || "",
+        subSubCategory: form.subSubCategory || "",
+        subsubCategory: form.subSubCategory || "",
+        sub_sub_category: form.subSubCategory || "",
+        categoryPathNames: [
+          form.selectedCategories[0] || form.category || "",
+          form.subCategory || "",
+          form.subSubCategory || "",
+        ].filter(Boolean),
         description: mergedDescription,
         price:         Number(form.price)         || 0,
         originalPrice: Number(form.originalPrice) || 0,
@@ -1300,63 +1327,87 @@ export default function AddProduct() {
               <span className="pe-icon"><MdOutlineCategory /></span>
               <h3>Product Categories</h3>
             </div>
-            <div className="pe-scroll-select">
-              {categories.length > 0
-                ? categories.map((c) => (
-                  <label key={c.id} className="pe-list-option">
-                    <input
-                      type="checkbox"
-                      checked={form.selectedCategories.includes(c.name)}
-                      onChange={() => toggleCategory(c.name)}
-                    />
-                    <span>{c.name}</span>
-                  </label>
-                ))
-                : ["Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax"].map((c) => (
-                  <label key={c} className="pe-list-option">
-                    <input
-                      type="checkbox"
-                      checked={form.selectedCategories.includes(c)}
-                      onChange={() => toggleCategory(c)}
-                    />
-                    <span>{c}</span>
-                  </label>
-                ))}
-            </div>
+            <div className="pe-category-controls">
+              <div className="pe-scroll-select">
+                {categories.length > 0
+                  ? categories.map((c) => (
+                    <label key={c.id} className="pe-list-option">
+                      <input
+                        type="checkbox"
+                        checked={form.selectedCategories.includes(c.name)}
+                        onChange={() => toggleCategory(c.name)}
+                      />
+                      <span>{c.name}</span>
+                    </label>
+                  ))
+                  : ["Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax"].map((c) => (
+                    <label key={c} className="pe-list-option">
+                      <input
+                        type="checkbox"
+                        checked={form.selectedCategories.includes(c)}
+                        onChange={() => toggleCategory(c)}
+                      />
+                      <span>{c}</span>
+                    </label>
+                  ))}
+              </div>
 
-            <select
-              value={form.subCategory}
-              onChange={(e) => set("subCategory", e.target.value)}
-              disabled={!form.category}
-            >
-              <option value="">Select sub category</option>
-              {subCategories
-                .filter((s) => !form.category || s.parentCategory === form.category)
-                .map((s) => (
-                  <option key={s.id} value={s.name}>{s.name}</option>
-                ))}
-            </select>
-
-            {form.selectedCategories.length === 0 && <p className="text-muted">There are no Categories selected</p>}
-
-            <div className="pe-inline-add pe-category-add">
-              <input
-                className="pe-input"
-                placeholder="Add new sub category"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-              />
-              <select value={newCategoryParent} onChange={(e) => setNewCategoryParent(e.target.value)}>
-                <option value="">Select parent category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
-                ))}
+              <select
+                value={form.subCategory}
+                onChange={(e) => {
+                  set("subCategory", e.target.value);
+                  set("subSubCategory", "");
+                }}
+                disabled={!form.category}
+              >
+                <option value="">Select sub category</option>
+                {subCategories
+                  .filter((s) => !form.category || s.parentCategory === form.category)
+                  .map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
               </select>
-              <button type="button" className="btn btn-outline" onClick={createCategory}>Add</button>
+
+              <select
+                value={form.subSubCategory || ""}
+                onChange={(e) => set("subSubCategory", e.target.value)}
+                disabled={!form.category || !form.subCategory}
+              >
+                <option value="">Select sub sub category</option>
+                {subSubCategories
+                  .filter(
+                    (s) =>
+                      (!form.category || s.parentCategory === form.category) &&
+                      (!form.subCategory || s.parentSubCategory === form.subCategory)
+                  )
+                  .map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+              </select>
+
+              {form.selectedCategories.length === 0 && <p className="text-muted">There are no Categories selected</p>}
+
+              <div className="pe-inline-add pe-category-add">
+                <input
+                  className="pe-input"
+                  placeholder="Add new sub category"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={createCategory}
+                  disabled={!form.category}
+                  title={!form.category ? "Select a parent category first" : "Add sub-category"}
+                >
+                  Add
+                </button>
+              </div>
+              <p className="text-muted">
+                Main categories are managed from the Categories page. Select one parent category above, then add sub-categories here.
+              </p>
             </div>
-            <p className="text-muted" style={{ marginTop: 8 }}>
-              Main categories are managed from the Categories page. Use this section to add sub-categories only.
-            </p>
           </div>
 
           <div className="pe-card">

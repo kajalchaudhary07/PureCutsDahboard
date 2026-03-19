@@ -37,6 +37,7 @@ const menuSections = [
     items: [
       { label: "Categories", path: "/categories", icon: <MdCategory /> },
       { label: "Sub Categories", path: "/subcategories", icon: <MdAccountTree /> },
+      { label: "Sub Sub Categories", path: "/subsubcategories", icon: <MdAccountTree /> },
       { label: "Brands", path: "/brands", icon: <MdBrandingWatermark /> },
       { label: "Attributes", path: "/attributes", icon: <MdTune /> },
       { label: "Units", path: "/units", icon: <MdStraighten /> },

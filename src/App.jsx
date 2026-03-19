@@ -9,6 +9,7 @@ import AddProduct from "./pages/products/AddProduct";
 import BrandsList from "./pages/brands/BrandsList";
 import CategoriesList from "./pages/categories/CategoriesList";
 import SubCategoriesList from "./pages/subcategories/SubCategoriesList";
+import SubSubCategoriesList from "./pages/subsubcategories/SubSubCategoriesList";
 import AttributesList from "./pages/attributes/AttributesList";
 import CreateAttribute from "./pages/attributes/CreateAttribute";
 import ProductReviews from "./pages/reviews/ProductReviews";
@@ -46,6 +47,7 @@ export default function App() {
               <Route path="brands" element={<BrandsList />} />
               <Route path="categories" element={<CategoriesList />} />
               <Route path="subcategories" element={<SubCategoriesList />} />
+              <Route path="subsubcategories" element={<SubSubCategoriesList />} />
               <Route path="attributes" element={<AttributesList />} />
               <Route path="attributes/create" element={<CreateAttribute />} />
               <Route path="attributes/edit/:id" element={<CreateAttribute />} />
