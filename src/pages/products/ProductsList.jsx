@@ -2,9 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
-  MdAdd, MdEdit, MdDelete, MdSearch, MdImage,
+  MdAdd,
+  MdEdit,
+  MdDelete,
+  MdSearch,
+  MdImage,
+  MdOutlineVisibility,
+  MdOutlineVisibilityOff,
 } from "react-icons/md";
-import { getProducts, deleteProduct } from "../../firestoreService";
+import { getProducts, deleteProduct, updateProduct } from "../../firestoreService";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax"];
@@ -49,6 +55,30 @@ export default function ProductsList() {
       load();
     } catch {
       toast.error("Delete failed");
+    }
+  };
+
+  const normalizeVisibility = (product) => {
+    const raw = String(product.visibility || "publish").trim().toLowerCase();
+    return raw === "draft" ? "draft" : "publish";
+  };
+
+  const setVisibility = async (product, nextVisibility) => {
+    const current = normalizeVisibility(product);
+    if (current === nextVisibility) return;
+
+    try {
+      await updateProduct(product.id, { visibility: nextVisibility });
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.id === product.id ? { ...p, visibility: nextVisibility } : p
+        )
+      );
+      toast.success(
+        `${product.name || "Product"} set to ${nextVisibility === "publish" ? "Published" : "Draft"}`
+      );
+    } catch {
+      toast.error("Failed to update product visibility");
     }
   };
 
@@ -123,6 +153,7 @@ export default function ProductsList() {
                   <th>Price (₹)</th>
                   <th>MRP (₹)</th>
                   <th>Tag</th>
+                  <th>Status</th>
                   <th>Stock</th>
                   <th>Actions</th>
                 </tr>
@@ -130,6 +161,11 @@ export default function ProductsList() {
               <tbody>
                 {filtered.map((p, i) => (
                   <tr key={p.id}>
+                    {(() => {
+                      const visibility = normalizeVisibility(p);
+                      const isPublished = visibility === "publish";
+                      return (
+                        <>
                     <td className="text-muted">{i + 1}</td>
                     <td>
                       {p.image ? (
@@ -156,12 +192,39 @@ export default function ProductsList() {
                       ) : "—"}
                     </td>
                     <td>
+                      <span
+                        className={`badge ${
+                          isPublished ? "badge-green" : "badge-blue"
+                        }`}
+                      >
+                        {isPublished ? "Published" : "Draft"}
+                      </span>
+                    </td>
+                    <td>
                       <span className={`badge ${p.stock > 0 || p.stock === undefined ? "badge-green" : "badge-red"}`}>
                         {p.stock !== undefined ? (p.stock > 0 ? "In Stock" : "Out") : "In Stock"}
                       </span>
                     </td>
                     <td>
                       <div className="flex gap-2">
+                        <button
+                          className={`btn btn-sm btn-icon ${
+                            isPublished ? "btn-outline" : "btn-primary"
+                          }`}
+                          title="Set Published"
+                          onClick={() => setVisibility(p, "publish")}
+                        >
+                          <MdOutlineVisibility />
+                        </button>
+                        <button
+                          className={`btn btn-sm btn-icon ${
+                            !isPublished ? "btn-outline" : "btn-secondary"
+                          }`}
+                          title="Set Draft"
+                          onClick={() => setVisibility(p, "draft")}
+                        >
+                          <MdOutlineVisibilityOff />
+                        </button>
                         <button
                           className="btn btn-warning btn-sm btn-icon"
                           title="Edit"
@@ -178,6 +241,9 @@ export default function ProductsList() {
                         </button>
                       </div>
                     </td>
+                        </>
+                      );
+                    })()}
                   </tr>
                 ))}
               </tbody>

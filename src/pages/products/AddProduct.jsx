@@ -19,9 +19,10 @@ import {
   getProducts, updateProduct, createProduct,
 } from "../../firestoreService";
 import { getBrands, addBrand } from "../../firestoreService";
-import { getCategories, addCategory } from "../../firestoreService";
+import { getCategories } from "../../firestoreService";
 import {
   getSubCategories,
+  addSubCategory,
   createVariant,
   getProductVariants,
   deleteProductVariant,
@@ -301,28 +302,42 @@ export default function AddProduct() {
 
   const createCategory = async () => {
     const name = newCategoryName.trim();
+    const parent = (newCategoryParent || form.category || "").trim();
+
     if (!name) {
-      toast.error("Category name is required");
+      toast.error("Sub-category name is required");
       return;
     }
-    if (categories.some((c) => c.name?.toLowerCase() === name.toLowerCase())) {
-      toast.warning("Category already exists");
+
+    if (!parent) {
+      toast.error("Please select a parent category");
+      return;
+    }
+
+    const duplicate = subCategories.some(
+      (s) =>
+        (s.name || "").toLowerCase() === name.toLowerCase() &&
+        (s.parentCategory || "").toLowerCase() === parent.toLowerCase()
+    );
+    if (duplicate) {
+      toast.warning("Sub-category already exists under selected parent");
       return;
     }
 
     try {
-      await addCategory({
+      await addSubCategory({
         name,
-        parentCategory: newCategoryParent || "",
+        parentCategory: parent,
       });
-      const all = await getCategories();
-      setCategories(all);
-      toggleCategory(name);
+      const allSubCategories = await getSubCategories();
+      setSubCategories(allSubCategories);
+      set("category", parent);
+      set("subCategory", name);
       setNewCategoryName("");
       setNewCategoryParent("");
-      toast.success("Category added");
+      toast.success("Sub-category added");
     } catch {
-      toast.error("Failed to add category");
+      toast.error("Failed to add sub-category");
     }
   };
 
@@ -723,6 +738,19 @@ export default function AddProduct() {
     }
   };
 
+  const preventImplicitSubmitOnEnter = (e) => {
+    if (e.key !== "Enter") return;
+
+    const tagName = e.target?.tagName?.toLowerCase();
+    const type = e.target?.type?.toLowerCase();
+    const isTextarea = tagName === "textarea";
+    const isButton = tagName === "button" || type === "submit" || type === "button";
+
+    if (isTextarea || isButton) return;
+
+    e.preventDefault();
+  };
+
   return (
     <div className="product-editor-page">
       <div className="product-editor-header">
@@ -732,7 +760,11 @@ export default function AddProduct() {
         <h1>{isEdit ? "Edit Product" : "Create Product"}</h1>
       </div>
 
-      <form onSubmit={handleSubmit} className="product-editor-layout">
+      <form
+        onSubmit={handleSubmit}
+        onKeyDown={preventImplicitSubmitOnEnter}
+        className="product-editor-layout"
+      >
         <section className="product-editor-main">
           <div className="pe-card">
             <div className="pe-title-row">
@@ -1310,18 +1342,21 @@ export default function AddProduct() {
             <div className="pe-inline-add pe-category-add">
               <input
                 className="pe-input"
-                placeholder="Add new category"
+                placeholder="Add new sub category"
                 value={newCategoryName}
                 onChange={(e) => setNewCategoryName(e.target.value)}
               />
               <select value={newCategoryParent} onChange={(e) => setNewCategoryParent(e.target.value)}>
-                <option value="">Parent category (optional)</option>
+                <option value="">Select parent category</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.name}>{c.name}</option>
                 ))}
               </select>
               <button type="button" className="btn btn-outline" onClick={createCategory}>Add</button>
             </div>
+            <p className="text-muted" style={{ marginTop: 8 }}>
+              Main categories are managed from the Categories page. Use this section to add sub-categories only.
+            </p>
           </div>
 
           <div className="pe-card">
