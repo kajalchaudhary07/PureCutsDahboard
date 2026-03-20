@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../auth/AuthProvider";
 import {
   MdDashboard,
   MdPermMedia,
@@ -92,6 +93,33 @@ const menuSections = [
   },
 ];
 
+const PATH_RESOURCE_MAP = {
+  "/dashboard": "Dashboard",
+  "/media": "Media",
+  "/categories": "Category",
+  "/subcategories": "Sub-Category",
+  "/subsubcategories": "Sub-Category",
+  "/attributes": "Attributes",
+  "/units": "Attributes",
+  "/brands": "Brands",
+  "/products": "Products",
+  "/products/add": "Products",
+  "/customers": "Customers",
+  "/orders": "Orders",
+  "/order-details": "Orders",
+  "/product-reviews": "Products",
+  "/banners": "Media",
+  "/coupons": "Media",
+  "/notifications": "Media",
+  "/chat": "Customers",
+  "/support-bot": "Customers",
+  "/admin": "Customers",
+  "/roles": "Customers",
+  "/profile": "Customers",
+  "/app-settings": "Customers",
+  "/image-guide": "Media",
+};
+
 function NavItem({ item }) {
   return (
     <NavLink
@@ -106,6 +134,22 @@ function NavItem({ item }) {
 }
 
 export default function Sidebar() {
+  const { hasPermission, isSuperAdmin } = useAuth();
+
+  const canView = (item) => {
+    if (isSuperAdmin) return true;
+    const resource = PATH_RESOURCE_MAP[item.path];
+    if (!resource) return true;
+    return hasPermission(resource, "view");
+  };
+
+  const visibleSections = menuSections
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(canView),
+    }))
+    .filter((group) => group.items.length > 0);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -116,7 +160,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        {menuSections.map((group) => (
+        {visibleSections.map((group) => (
           <div key={group.group} className="nav-group">
             {group.dividerBefore && <div className="nav-divider" />}
             <div className="nav-group-title">{group.group}</div>

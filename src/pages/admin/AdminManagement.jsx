@@ -10,16 +10,16 @@ import {
 } from "react-icons/md";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
+import { useAuth } from "../../auth/AuthProvider";
 import {
   getAdmins,
-  addAdmin,
-  updateAdmin,
   deleteAdmin,
-  toggleAdminStatus,
+  setAdminAuthClaims,
 } from "../../firestoreService";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const emptyForm = {
+  uid: "",
   name: "",
   email: "",
   phone: "",
@@ -29,6 +29,7 @@ const emptyForm = {
 };
 
 export default function AdminManagement() {
+  const { isSuperAdmin } = useAuth();
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -78,6 +79,7 @@ export default function AdminManagement() {
 
   const openEdit = (admin) => {
     setForm({
+      uid: admin.uid || admin.id || "",
       name: admin.name || "",
       email: admin.email || "",
       phone: admin.phone || "",
@@ -112,6 +114,11 @@ export default function AdminManagement() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      toast.error("Only super admins can create or edit admins.");
+      return;
+    }
+
     if (!form.name.trim()) {
       toast.error("Admin name is required");
       return;
@@ -133,24 +140,44 @@ export default function AdminManagement() {
         avatar: avatarUrl,
       };
 
-      if (editId) {
-        await updateAdmin(editId, data);
-        toast.success("Admin updated!");
-      } else {
-        await addAdmin(data);
-        toast.success("Admin added!");
-      }
+      await setAdminAuthClaims({
+        uid: form.uid || "",
+        email: data.email,
+        role: data.role,
+        active: data.active,
+        name: data.name,
+        phone: data.phone,
+        avatar: data.avatar,
+      });
+
+      toast.success(editId ? "Admin updated!" : "Admin added!");
 
       setShowModal(false);
       load();
-    } catch {
-      toast.error("Failed to save admin");
+    } catch (e) {
+      const raw = String(e?.message || "");
+      const clean = raw.replace(/^Firebase:\s*/i, "").trim();
+
+      if (/Target auth user not found/i.test(clean)) {
+        toast.error(
+          "This email is not registered in Firebase Auth yet. Ask the user to sign up once, then promote to admin."
+        );
+      } else if (/permission-denied/i.test(clean)) {
+        toast.error("Permission denied. You must be a super admin to manage admins.");
+      } else {
+        toast.error(clean || "Failed to save admin");
+      }
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
+    if (!isSuperAdmin) {
+      toast.error("Only super admins can delete admins.");
+      return;
+    }
+
     try {
       await deleteAdmin(deleteTarget);
       toast.success("Admin deleted");
@@ -162,12 +189,25 @@ export default function AdminManagement() {
   };
 
   const handleToggleStatus = async (admin) => {
+    if (!isSuperAdmin) {
+      toast.error("Only super admins can change admin status.");
+      return;
+    }
+
     try {
-      await toggleAdminStatus(admin.id, admin.active);
+      await setAdminAuthClaims({
+        uid: admin.uid || "",
+        email: admin.email,
+        role: admin.role || "admin",
+        active: !(admin.active !== false),
+        name: admin.name,
+        phone: admin.phone,
+        avatar: admin.avatar,
+      });
       toast.success(`Admin ${admin.active ? "deactivated" : "activated"}`);
       load();
-    } catch {
-      toast.error("Failed to update status");
+    } catch (e) {
+      toast.error(String(e?.message || "Failed to update status"));
     }
   };
 
@@ -298,6 +338,11 @@ export default function AdminManagement() {
         <button className="btn btn-primary" onClick={openAdd} style={{ marginBottom: 12 }}>
           <MdAdd /> Create Admin
         </button>
+        {!isSuperAdmin ? (
+          <div className="text-muted" style={{ marginBottom: 12, fontSize: 12 }}>
+            You can view admins, but only super admins can create/edit/delete.
+          </div>
+        ) : null}
 
         <div className="search-wrap" style={{ maxWidth: 300 }}>
           <MdSearch />
@@ -400,6 +445,7 @@ export default function AdminManagement() {
                           className="btn btn-warning btn-sm btn-icon"
                           onClick={() => openEdit(admin)}
                           title="Edit"
+                          disabled={!isSuperAdmin}
                         >
                           <MdEdit />
                         </button>
@@ -407,6 +453,7 @@ export default function AdminManagement() {
                           className="btn btn-danger btn-sm btn-icon"
                           onClick={() => setDeleteTarget(admin.id)}
                           title="Delete"
+                          disabled={!isSuperAdmin}
                         >
                           <MdDelete />
                         </button>

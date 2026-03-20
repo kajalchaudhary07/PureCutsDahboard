@@ -14,7 +14,8 @@ import {
   orderBy,
   where,
 } from "firebase/firestore";
-import { db } from "./firebaseConfig";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "./firebaseConfig";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
 
@@ -878,7 +879,95 @@ export const createBroadcastNotification = async ({
 };
 
 // ─── Admins ───────────────────────────────────────────────────────────────────
-export const getAdmins = () => getAll("admins");
+export const getAdmins = async () => {
+  const asActiveBool = (value) => value !== false;
+  const normalizeRole = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s-]+/g, "");
+
+  const isAdminLikeRole = (value) => {
+    const role = normalizeRole(value);
+    return role === "admin" || role === "superadmin" || role === "superadmins";
+  };
+
+  const normalizeAdminRecord = (id, raw = {}) => ({
+    id,
+    uid: String(raw.uid || id || "").trim(),
+    name: String(raw.name || "").trim(),
+    email: String(raw.email || "").trim().toLowerCase(),
+    phone: String(raw.phone || "").trim(),
+    role: String(raw.role || "admin").trim(),
+    active: asActiveBool(raw.active),
+    avatar: String(raw.avatar || "").trim(),
+    createdAt: raw.createdAt || null,
+    updatedAt: raw.updatedAt || null,
+  });
+
+  const adminsMap = new Map();
+
+  // Source 0: Firebase Auth claims via callable function (most reliable for real admin status)
+  try {
+    const authRows = await getAdminsFromAuth();
+    authRows.forEach((raw) => {
+      const row = normalizeAdminRecord(raw.uid || raw.email, raw);
+      const key = row.uid || row.email || row.id;
+      if (key) adminsMap.set(key, row);
+    });
+  } catch {
+    // Keep Firestore fallback sources below.
+  }
+
+  // Primary source: admins collection
+  try {
+    const adminSnap = await getDocs(collection(db, "admins"));
+    adminSnap.docs.forEach((d) => {
+      const row = normalizeAdminRecord(d.id, d.data());
+      const key = row.uid || row.email || row.id;
+      if (key) adminsMap.set(key, row);
+    });
+  } catch {
+    // keep fallback path below
+  }
+
+  // Fallback/enrichment source: users collection with admin-like roles
+  try {
+    const roleSnap = await getDocs(collection(db, "users"));
+    roleSnap.docs.forEach((d) => {
+      const data = d.data() || {};
+      if (!isAdminLikeRole(data.role)) return;
+
+      const row = normalizeAdminRecord(d.id, data);
+      const key = row.uid || row.email || row.id;
+      if (!key) return;
+
+      if (!adminsMap.has(key)) {
+        adminsMap.set(key, row);
+      } else {
+        const prev = adminsMap.get(key);
+        adminsMap.set(key, {
+          ...prev,
+          // fill missing values from users document
+          name: prev.name || row.name,
+          email: prev.email || row.email,
+          phone: prev.phone || row.phone,
+          role: prev.role || row.role,
+          avatar: prev.avatar || row.avatar,
+          uid: prev.uid || row.uid,
+        });
+      }
+    });
+  } catch {
+    // If both sources are blocked, caller will handle with UI error.
+  }
+
+  return Array.from(adminsMap.values()).sort((a, b) => {
+    const aName = String(a.name || a.email || "").toLowerCase();
+    const bName = String(b.name || b.email || "").toLowerCase();
+    return aName.localeCompare(bName);
+  });
+};
 export const addAdmin = (data) => addItem("admins", {
   ...data,
   active: Boolean(data.active),
@@ -890,6 +979,18 @@ export const updateAdmin = (id, data) => updateItem("admins", id, {
 });
 export const deleteAdmin = (id) => deleteItem("admins", id);
 export const toggleAdminStatus = (id, active) => updateAdmin(id, { active: !active });
+
+export const setAdminAuthClaims = async ({ uid, email, role, active, name, phone, avatar }) => {
+  const call = httpsCallable(functions, "setAdminClaims");
+  const result = await call({ uid, email, role, active, name, phone, avatar });
+  return result?.data || null;
+};
+
+export const getAdminsFromAuth = async () => {
+  const call = httpsCallable(functions, "listAdminsFromAuth");
+  const result = await call({});
+  return Array.isArray(result?.data?.users) ? result.data.users : [];
+};
 
 // ─── Roles & Permissions ─────────────────────────────────────────────────────
 const roleDocId = (roleName) =>

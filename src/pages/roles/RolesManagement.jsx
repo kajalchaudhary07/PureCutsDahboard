@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { MdSave } from "react-icons/md";
 import { getRolePermissions, saveRolePermissions } from "../../firestoreService";
+import { useAuth } from "../../auth/AuthProvider";
 
 const ROLES = ["Demo", "User", "Admin", "Unknown"];
 const RESOURCES = [
@@ -64,6 +65,7 @@ const normalizePermissions = (rawPermissions, roleName) => {
 };
 
 export default function RolesManagement() {
+  const { isSuperAdmin } = useAuth();
   const [selectedRole, setSelectedRole] = useState("Admin");
   const [permissions, setPermissions] = useState(defaultPermissions("Admin"));
   const [loading, setLoading] = useState(true);
@@ -89,6 +91,7 @@ export default function RolesManagement() {
   }, [selectedRole]);
 
   const togglePermission = (resource, action) => {
+    if (!isSuperAdmin) return;
     setPermissions((prev) =>
       prev.map((row) =>
         row.resource === resource
@@ -99,6 +102,11 @@ export default function RolesManagement() {
   };
 
   const saveCurrentRole = async () => {
+    if (!isSuperAdmin) {
+      toast.error("Only super admins can save role permissions.");
+      return;
+    }
+
     setSaving(true);
     try {
       await saveRolePermissions(selectedRole, permissions);
@@ -121,6 +129,12 @@ export default function RolesManagement() {
           <MdSave /> {saving ? "Saving..." : "Save Permissions"}
         </button>
       </div>
+
+      {!isSuperAdmin ? (
+        <div className="text-muted" style={{ marginBottom: 12, fontSize: 12 }}>
+          Read-only mode: only super admins can modify role permissions.
+        </div>
+      ) : null}
 
       <div className="roles-layout">
         <div className="card roles-menu-card">
@@ -168,6 +182,7 @@ export default function RolesManagement() {
                               type="checkbox"
                               checked={row[action]}
                               onChange={() => togglePermission(row.resource, action)}
+                              disabled={!isSuperAdmin}
                             />
                           </label>
                         </td>

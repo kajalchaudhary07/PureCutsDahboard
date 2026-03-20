@@ -7,11 +7,14 @@ const initialRegister = { name: "", email: "", password: "", confirmPassword: ""
 const initialLogin = { email: "", password: "" };
 
 export default function AuthPage() {
-  const { user, authLoading, isAdmin, loginWithEmail, registerWithEmail } = useAuth();
+  const { user, authLoading, isAdmin, loginWithEmail, registerWithEmail, requestPasswordReset } = useAuth();
   const [mode, setMode] = useState("login");
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [loginForm, setLoginForm] = useState(initialLogin);
   const [registerForm, setRegisterForm] = useState(initialRegister);
+  const [forgotEmail, setForgotEmail] = useState("");
   const location = useLocation();
 
   const redirectTo = useMemo(() => {
@@ -89,6 +92,27 @@ export default function AuthPage() {
     }
   };
 
+  const onForgotPassword = async (e) => {
+    e.preventDefault();
+    const emailToReset = String(forgotEmail || loginForm.email || "").trim();
+    if (!emailToReset) {
+      toast.error("Please enter your email to reset password");
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      await requestPasswordReset(emailToReset);
+      toast.success("Password reset link sent. Please check your email inbox.");
+      setForgotOpen(false);
+      setForgotEmail("");
+    } catch (error) {
+      toast.error(error?.message || "Could not send password reset email");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   return (
     <div className="auth-page">
       <div className="auth-card">
@@ -139,6 +163,41 @@ export default function AuthPage() {
             <button className="btn btn-primary auth-submit" type="submit" disabled={loading}>
               {loading ? "Signing in..." : "Sign In"}
             </button>
+
+            <div className="auth-forgot-row">
+              <button
+                type="button"
+                className="auth-link-btn"
+                onClick={() => {
+                  setForgotOpen((prev) => !prev);
+                  if (!forgotEmail && loginForm.email) {
+                    setForgotEmail(loginForm.email);
+                  }
+                }}
+              >
+                Forgot Password?
+              </button>
+            </div>
+
+            {forgotOpen ? (
+              <div className="auth-forgot-box">
+                <label>Reset password email</label>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline auth-reset-btn"
+                  disabled={forgotLoading}
+                  onClick={onForgotPassword}
+                >
+                  {forgotLoading ? "Sending..." : "Send Reset Link"}
+                </button>
+              </div>
+            ) : null}
           </form>
         ) : (
           <form onSubmit={onRegister} className="auth-form">
