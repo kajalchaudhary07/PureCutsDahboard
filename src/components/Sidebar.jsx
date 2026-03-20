@@ -17,6 +17,7 @@ import {
   MdLocalOffer,
   MdNotificationsNone,
   MdChatBubbleOutline,
+  MdSmartToy,
   MdAdminPanelSettings,
   MdBadge,
   MdPerson,
@@ -67,7 +68,10 @@ const menuSections = [
   },
   {
     group: "Support Management",
-    items: [{ label: "Chat", path: "/chat", icon: <MdChatBubbleOutline /> }],
+    items: [
+      { label: "Chat", path: "/chat", icon: <MdChatBubbleOutline /> },
+      { label: "Support Bot", path: "/support-bot", icon: <MdSmartToy /> },
+    ],
   },
   {
     group: "Admin Management",

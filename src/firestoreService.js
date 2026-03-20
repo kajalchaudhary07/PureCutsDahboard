@@ -922,3 +922,73 @@ export const saveRolePermissions = async (roleName, permissions) => {
     { merge: true }
   );
 };
+
+// ─── Support Bot Config / Leads ─────────────────────────────────────────────
+const DEFAULT_SUPPORT_BOT_CONFIG = {
+  enabled: true,
+  steps: {
+    START: {
+      text: "Welcome to PureCuts Bulk Support 👋",
+      options: ["Bulk Order Discount", "Product Availability", "Delivery Info"],
+    },
+    CATEGORY: {
+      text: "Select product type:",
+      options: ["Skincare", "Hair", "Equipment", "Mixed"],
+    },
+    QUANTITY: {
+      text: "Select quantity range:",
+      options: ["5-10", "10-25", "25-50", "50+"],
+    },
+  },
+  discounts: {
+    "5-10": "5%",
+    "10-25": "8%",
+    "25-50": "12%",
+    "50+": "15%",
+  },
+};
+
+export const getSupportBotConfig = async () => {
+  const ref = doc(db, "bot_config", "support_bot");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return DEFAULT_SUPPORT_BOT_CONFIG;
+  return {
+    ...DEFAULT_SUPPORT_BOT_CONFIG,
+    ...snap.data(),
+    steps: {
+      ...DEFAULT_SUPPORT_BOT_CONFIG.steps,
+      ...(snap.data()?.steps || {}),
+    },
+    discounts: {
+      ...DEFAULT_SUPPORT_BOT_CONFIG.discounts,
+      ...(snap.data()?.discounts || {}),
+    },
+  };
+};
+
+export const saveSupportBotConfig = async (config) => {
+  const ref = doc(db, "bot_config", "support_bot");
+  await setDoc(
+    ref,
+    {
+      ...config,
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+};
+
+export const getBulkLeads = async () => {
+  try {
+    const snap = await getDocs(
+      query(collection(db, "bulkLeads"), orderBy("timestamp", "desc"))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "bulkLeads"));
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    rows.sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp));
+    return rows;
+  }
+};

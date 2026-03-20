@@ -10,14 +10,17 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
 import {
+  MdAttachFile,
   MdCircle,
+  MdClose,
   MdErrorOutline,
   MdRefresh,
   MdSearch,
   MdSend,
 } from "react-icons/md";
-import { db } from "../../firebaseConfig";
+import { db, storage } from "../../firebaseConfig";
 import { useAuth } from "../../auth/AuthProvider";
 
 const statusClass = {
@@ -37,7 +40,12 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [messages, setMessages] = useState([]);
+  const [activeSupportFlow, setActiveSupportFlow] = useState(null);
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
   const messageListRef = useRef(null);
+  const mediaInputRef = useRef(null);
 
   const toMillis = (value) => {
     if (!value) return 0;
@@ -82,6 +90,38 @@ export default function ChatPage() {
   const resolveMessageTime = (data = {}) => {
     return data.serverTimestamp || data.timestamp || data.createdAt || null;
   };
+
+  const resolveMediaType = (data = {}) => {
+    const explicit = String(data.mediaType || "").toLowerCase();
+    if (explicit === "image" || explicit === "video") return explicit;
+
+    const mimeType = String(data.mimeType || "").toLowerCase();
+    if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("video/")) return "video";
+
+    const mediaUrl = String(data.mediaUrl || data.image || data.video || "").toLowerCase();
+    if (/\.(png|jpg|jpeg|gif|webp|svg)(\?|#|$)/.test(mediaUrl)) return "image";
+    if (/\.(mp4|mov|m4v|webm|ogv|m3u8)(\?|#|$)/.test(mediaUrl)) return "video";
+    return "";
+  };
+
+  const clearSelectedMedia = () => {
+    setSelectedMedia(null);
+    if (mediaPreviewUrl) {
+      URL.revokeObjectURL(mediaPreviewUrl);
+    }
+    setMediaPreviewUrl("");
+    setUploadProgress(0);
+    if (mediaInputRef.current) {
+      mediaInputRef.current.value = "";
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
+    };
+  }, [mediaPreviewUrl]);
 
   useEffect(() => {
     setLoadingThreads(true);
@@ -168,7 +208,11 @@ export default function ChatPage() {
           const resolvedTime = resolveMessageTime(data);
           const senderRole = String(data.senderRole || "").toLowerCase();
           const senderId = String(data.senderId || "").trim();
-          const from = senderRole === "admin" || senderId === user?.uid ? "admin" : "customer";
+          const from = senderRole === "admin" || senderId === user?.uid
+            ? "admin"
+            : senderRole === "bot"
+              ? "bot"
+              : "customer";
 
           return {
             id: d.id,
@@ -177,6 +221,12 @@ export default function ChatPage() {
             senderId,
             seen: data.seen === true,
             text: String(data.text || data.message || "").trim(),
+            mediaUrl: String(data.mediaUrl || data.image || data.video || "").trim(),
+            mediaType: resolveMediaType(data),
+            fileName: String(data.fileName || "").trim(),
+            options: Array.isArray(data.options)
+              ? data.options.map((item) => String(item || "").trim()).filter(Boolean)
+              : [],
             time: formatTime(resolvedTime),
             _sortMs: toMillis(resolvedTime),
             _raw: data,
@@ -225,6 +275,20 @@ export default function ChatPage() {
   }, [activeThread?.chatId, user?.uid]);
 
   useEffect(() => {
+    if (!activeThread?.chatId) {
+      setActiveSupportFlow(null);
+      return;
+    }
+
+    const unsub = onSnapshot(doc(db, "chats", activeThread.chatId), (snap) => {
+      const data = snap.data() || {};
+      setActiveSupportFlow(data.supportFlow || null);
+    });
+
+    return () => unsub();
+  }, [activeThread?.chatId]);
+
+  useEffect(() => {
     if (!messageListRef.current) return;
     messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
   }, [messages]);
@@ -237,18 +301,80 @@ export default function ChatPage() {
 
   const sendMessage = async () => {
     const message = draft.trim();
-    if (!message || !activeThread?.chatId || !user?.uid || sending) return;
+    const hasMedia = Boolean(selectedMedia);
+    if ((!message && !hasMedia) || !activeThread?.chatId || !user?.uid || sending) return;
 
     setSending(true);
     setError("");
+    setUploadProgress(0);
     try {
       const localNow = new Date();
+      let mediaUrl = "";
+      let mediaType = "";
+      let mimeType = "";
+      let fileName = "";
+
+      if (selectedMedia) {
+        const file = selectedMedia;
+        const isImage = String(file.type || "").startsWith("image/");
+        const isVideo = String(file.type || "").startsWith("video/");
+
+        if (!isImage && !isVideo) {
+          throw new Error("Please select only image or video files.");
+        }
+
+        const maxBytes = 25 * 1024 * 1024;
+        if (file.size > maxBytes) {
+          throw new Error("Media size should be 25MB or less.");
+        }
+
+        mediaType = isImage ? "image" : "video";
+        mimeType = String(file.type || "");
+        fileName = String(file.name || "media");
+        const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const mediaPath = `chats/${activeThread.chatId}/media/${user.uid}/${Date.now()}_${safeFileName}`;
+        const storageRef = ref(storage, mediaPath);
+
+        mediaUrl = await new Promise((resolve, reject) => {
+          const task = uploadBytesResumable(storageRef, file, {
+            contentType: mimeType || undefined,
+          });
+
+          task.on(
+            "state_changed",
+            (snapshot) => {
+              const progress =
+                snapshot.totalBytes > 0
+                  ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+                  : 0;
+              setUploadProgress(progress);
+            },
+            reject,
+            () => getDownloadURL(task.snapshot.ref).then(resolve).catch(reject)
+          );
+        });
+      }
+
+      const messageText = message;
+      const hasText = messageText.length > 0;
+      const previewLabel = hasText
+        ? messageText
+        : mediaType === "image"
+          ? "📷 Photo"
+          : mediaType === "video"
+            ? "🎬 Video"
+            : "Media";
+
       await addDoc(collection(db, "chats", activeThread.chatId, "messages"), {
         chatId: activeThread.chatId,
         senderId: user.uid,
         senderRole: "admin",
-        text: message,
-        message,
+        text: messageText,
+        message: messageText,
+        mediaUrl,
+        mediaType,
+        mimeType,
+        fileName,
         seen: false,
         timestamp: localNow,
         serverTimestamp: serverTimestamp(),
@@ -256,7 +382,7 @@ export default function ChatPage() {
       });
 
       await updateDoc(doc(db, "chats", activeThread.chatId), {
-        lastMessage: message,
+        lastMessage: previewLabel,
         lastMessageBy: user.uid,
         lastTimestamp: localNow,
         lastServerTimestamp: serverTimestamp(),
@@ -265,10 +391,29 @@ export default function ChatPage() {
       });
 
       setDraft("");
+      clearSelectedMedia();
     } catch (err) {
       setError(err?.message || "Failed to send message.");
     } finally {
       setSending(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const updateSupportFlowStep = async (step) => {
+    if (!activeThread?.chatId) return;
+    try {
+      await updateDoc(doc(db, "chats", activeThread.chatId), {
+        supportFlow: {
+          step,
+          selectedCategory: "",
+          selectedQuantity: "",
+          isCompleted: step === "HUMAN",
+        },
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      setError(err?.message || "Could not update support flow.");
     }
   };
 
@@ -362,7 +507,26 @@ export default function ChatPage() {
                     </div>
                   </div>
                 </div>
-                <span className="chat-thread-id">{activeThread.chatId}</span>
+                <div className="chat-head-actions">
+                  {activeSupportFlow?.step ? (
+                    <span className="chat-flow-pill">Flow: {activeSupportFlow.step}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => updateSupportFlowStep("HUMAN")}
+                  >
+                    Force Human
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => updateSupportFlowStep("START")}
+                  >
+                    Resume Bot
+                  </button>
+                  <span className="chat-thread-id">{activeThread.chatId}</span>
+                </div>
               </div>
 
               <div className="chat-message-list" ref={messageListRef}>
@@ -373,17 +537,115 @@ export default function ChatPage() {
                 ) : messages.map((message) => (
                   <div
                     key={message.id}
-                    className={`chat-bubble-row ${message.from === "admin" ? "from-admin" : "from-customer"}`}
+                    className={`chat-bubble-row ${message.from === "admin" ? "from-admin" : message.from === "bot" ? "from-bot" : "from-customer"}`}
                   >
                     <div className="chat-bubble">
-                      <p>{message.text}</p>
+                      {message.mediaUrl && message.mediaType === "image" ? (
+                        <a
+                          href={message.mediaUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="chat-media-link"
+                        >
+                          <img
+                            src={message.mediaUrl}
+                            alt={message.fileName || "chat-media"}
+                            className="chat-media-preview"
+                          />
+                        </a>
+                      ) : null}
+
+                      {message.mediaUrl && message.mediaType === "video" ? (
+                        <video className="chat-media-preview" controls preload="metadata">
+                          <source src={message.mediaUrl} type="video/mp4" />
+                          Your browser does not support video playback.
+                        </video>
+                      ) : null}
+
+                      {message.text ? <p>{message.text}</p> : null}
+                      {message.options?.length ? (
+                        <div className="chat-option-wrap">
+                          {message.options.map((opt) => (
+                            <button
+                              key={`${message.id}-${opt}`}
+                              type="button"
+                              className="chat-option-chip"
+                              disabled
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                       <span>{message.time}</span>
                     </div>
                   </div>
                 ))}
               </div>
 
+              {selectedMedia ? (
+                <div className="chat-media-draft">
+                  <div className="chat-media-draft-preview">
+                    {String(selectedMedia.type || "").startsWith("image/") ? (
+                      <img src={mediaPreviewUrl} alt={selectedMedia.name || "selected-media"} />
+                    ) : (
+                      <video src={mediaPreviewUrl} controls preload="metadata" />
+                    )}
+                  </div>
+                  <div className="chat-media-draft-meta">
+                    <strong>{selectedMedia.name}</strong>
+                    <span>{(selectedMedia.size / (1024 * 1024)).toFixed(2)} MB</span>
+                    {sending && uploadProgress > 0 ? (
+                      <span className="text-muted">Uploading: {uploadProgress}%</span>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="chat-icon-btn"
+                    onClick={clearSelectedMedia}
+                    disabled={sending}
+                    aria-label="Remove selected media"
+                  >
+                    <MdClose />
+                  </button>
+                </div>
+              ) : null}
+
               <div className="chat-compose-row">
+                <input
+                  ref={mediaInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (!file) return;
+
+                    const isImage = String(file.type || "").startsWith("image/");
+                    const isVideo = String(file.type || "").startsWith("video/");
+                    if (!isImage && !isVideo) {
+                      setError("Please select only image or video files.");
+                      if (mediaInputRef.current) mediaInputRef.current.value = "";
+                      return;
+                    }
+
+                    setError("");
+                    if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
+                    setSelectedMedia(file);
+                    setMediaPreviewUrl(URL.createObjectURL(file));
+                  }}
+                  style={{ display: "none" }}
+                />
+
+                <button
+                  type="button"
+                  className="chat-icon-btn"
+                  onClick={() => mediaInputRef.current?.click()}
+                  disabled={sending}
+                  aria-label="Attach media"
+                >
+                  <MdAttachFile />
+                </button>
+
                 <input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -396,7 +658,7 @@ export default function ChatPage() {
                   type="button"
                   className="btn btn-primary"
                   onClick={sendMessage}
-                  disabled={sending || !draft.trim()}
+                  disabled={sending || (!draft.trim() && !selectedMedia)}
                 >
                   <MdSend /> {sending ? "Sending..." : "Send"}
                 </button>
