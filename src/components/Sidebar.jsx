@@ -87,6 +87,7 @@ const menuSections = [
     items: [
       { label: "Profile", path: "/profile", icon: <MdPerson /> },
       { label: "App Settings", path: "/app-settings", icon: <MdSettings /> },
+      { label: "Image Resolution Guide", path: "/image-guide", icon: <MdPermMedia /> },
     ],
   },
 ];

@@ -27,6 +27,7 @@ import BannersPage from "./pages/banners/BannersPage";
 import CouponsPage from "./pages/coupons/CouponsPage";
 import ProfilePage from "./pages/profile/ProfilePage";
 import AppSettingsPage from "./pages/settings/AppSettingsPage";
+import ImageResolutionGuidePage from "./pages/settings/ImageResolutionGuidePage";
 import SupportBotPage from "./pages/support-bot/SupportBotPage";
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="chat" element={<ChatPage />} />
               <Route path="support-bot" element={<SupportBotPage />} />
+              <Route path="image-guide" element={<ImageResolutionGuidePage />} />
               <Route path="admin" element={<AdminManagement />} />
               <Route path="roles" element={<RolesManagement />} />
               <Route path="profile" element={<ProfilePage />} />
