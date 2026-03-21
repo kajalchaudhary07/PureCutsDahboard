@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import {
   MdAdd,
+  MdContentPaste,
+  MdDeleteOutline,
   MdNotificationsActive,
   MdSearch,
   MdTravelExplore,
@@ -9,6 +11,7 @@ import {
 import {
   createBroadcastNotification,
   createOrderNotification,
+  deleteNotification,
   getNotifications,
   getOrders,
   getUsers,
@@ -31,6 +34,20 @@ const formatDateTime = (value) => {
   return dt ? dt.toLocaleString() : "-";
 };
 
+const normalizeRole = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s-]+/g, "");
+
+const isAdminLikeUser = (user = {}) => {
+  const role = normalizeRole(user.role);
+  return role === "admin" || role === "superadmin" || role === "staff";
+};
+
+const userKey = (user = {}) =>
+  String(user.uid || user.id || user.userId || "").trim();
+
 const getOrderRef = (order) => order.orderId || order.code || order.number || order.id || "-";
 
 const getCustomer = (order) => ({
@@ -38,12 +55,49 @@ const getCustomer = (order) => ({
   phone: order.phone || order.customerPhone || order.customer?.phone || order.userPhone || "",
 });
 
-const orderTemplate = (status, orderRef) => {
-  const ref = `#${String(orderRef).replace(/^#/, "")}`;
-  if (status === "dispatched") return { title: `OrderDispatched ${ref}`, message: `Your order ${ref} has been dispatched.` };
-  if (status === "conformed") return { title: `OrderConfirmed ${ref}`, message: `Your order ${ref} is confirmed and being prepared.` };
-  if (status === "packed") return { title: `OrderPacked ${ref}`, message: `Your order ${ref} has been packed and will be dispatched soon.` };
-  return { title: `OrderInProcess ${ref}`, message: `Your order ${ref} is currently being processed.` };
+const getOrderProductLabel = (order = {}) => {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const names = items
+    .map((item) =>
+      String(
+        item?.productName || item?.name || item?.title || item?.product?.name || ""
+      ).trim()
+    )
+    .filter(Boolean);
+
+  if (names.length === 0) return "your order";
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1} more item${names.length - 1 > 1 ? "s" : ""}`;
+};
+
+const orderTemplate = (status, order = {}) => {
+  const productLabel = getOrderProductLabel(order);
+
+  if (status === "dispatched") {
+    return {
+      title: `Order Dispatched: ${productLabel}`,
+      message: `Your order for ${productLabel} has been dispatched.`,
+    };
+  }
+
+  if (status === "conformed") {
+    return {
+      title: `Order Confirmed: ${productLabel}`,
+      message: `Your order for ${productLabel} is confirmed and being prepared.`,
+    };
+  }
+
+  if (status === "packed") {
+    return {
+      title: `Order Packed: ${productLabel}`,
+      message: `Your order for ${productLabel} has been packed and will be dispatched soon.`,
+    };
+  }
+
+  return {
+    title: `Order In Process: ${productLabel}`,
+    message: `Your order for ${productLabel} is currently being processed.`,
+  };
 };
 
 const broadcastTemplate = (type) => {
@@ -60,6 +114,7 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const [search, setSearch] = useState("");
 
   const [targetType, setTargetType] = useState("order");
@@ -71,7 +126,6 @@ export default function NotificationsPage() {
   const [message, setMessage] = useState("");
   const [sendApp, setSendApp] = useState(true);
   const [sendSms, setSendSms] = useState(true);
-  const [sendWhatsapp, setSendWhatsapp] = useState(true);
   const [updateOrderStatus, setUpdateOrderStatus] = useState(true);
 
   const load = async () => {
@@ -100,6 +154,24 @@ export default function NotificationsPage() {
     () => orders.find((o) => o.id === selectedOrderId) || null,
     [orders, selectedOrderId]
   );
+
+  const broadcastRecipients = useMemo(() => {
+    const unique = new Map();
+
+    users.forEach((user) => {
+      if (isAdminLikeUser(user)) return;
+      if (user.active === false) return;
+
+      const key = userKey(user);
+      if (!key) return;
+
+      if (!unique.has(key)) {
+        unique.set(key, user);
+      }
+    });
+
+    return Array.from(unique.values());
+  }, [users]);
 
   const findOrderByLookup = () => {
     const needle = orderLookup.trim().toLowerCase().replace(/^#/, "");
@@ -130,6 +202,26 @@ export default function NotificationsPage() {
     toast.success(`Order #${getOrderRef(found)} loaded`);
   };
 
+  const pasteOrderIdFromClipboard = async () => {
+    try {
+      if (!navigator?.clipboard?.readText) {
+        toast.error("Clipboard access is not available in this browser");
+        return;
+      }
+
+      const text = (await navigator.clipboard.readText())?.trim();
+      if (!text) {
+        toast.error("Clipboard is empty");
+        return;
+      }
+
+      setOrderLookup(text);
+      toast.success("Order ID pasted from clipboard");
+    } catch {
+      toast.error("Could not read clipboard. Please allow clipboard permission.");
+    }
+  };
+
   useEffect(() => {
     if (targetType === "order") {
       if (!selectedOrder) {
@@ -137,7 +229,7 @@ export default function NotificationsPage() {
         setMessage("");
         return;
       }
-      const tpl = orderTemplate(status, getOrderRef(selectedOrder));
+      const tpl = orderTemplate(status, selectedOrder);
       setTitle(tpl.title);
       setMessage(tpl.message);
       return;
@@ -171,15 +263,20 @@ export default function NotificationsPage() {
       return;
     }
 
-    if (targetType === "broadcast" && !sendApp && !sendWhatsapp) {
-      toast.error("Select at least one channel (App or WhatsApp)");
+    if (targetType === "order" && !sendApp && !sendSms) {
+      toast.error("Select at least one channel (App or SMS)");
+      return;
+    }
+
+    if (targetType === "broadcast" && !sendApp) {
+      toast.error("Select at least one channel (App)");
       return;
     }
 
     if (targetType === "order") {
       const customer = getCustomer(selectedOrder);
-      if ((sendSms || sendWhatsapp) && !customer.phone) {
-        toast.error("Selected order has no phone number for SMS/WhatsApp");
+      if (sendSms && !customer.phone) {
+        toast.error("Selected order has no phone number for SMS");
         return;
       }
     }
@@ -192,8 +289,9 @@ export default function NotificationsPage() {
           status,
           title: title.trim(),
           message: message.trim(),
+          sendApp,
           sendSms,
-          sendWhatsapp,
+          sendWhatsapp: false,
           createdBy: "admin",
         });
 
@@ -205,19 +303,41 @@ export default function NotificationsPage() {
           title: title.trim(),
           message: message.trim(),
           type: broadcastType,
-          users,
+          users: broadcastRecipients,
           sendApp,
-          sendWhatsapp,
+          sendWhatsapp: false,
           createdBy: "admin",
         });
       }
 
       toast.success("Notification sent successfully");
       load();
-    } catch {
-      toast.error("Failed to send notification");
+    } catch (error) {
+      const messageText =
+        error?.message || error?.code || "Failed to send notification";
+      toast.error(`Failed to send notification: ${messageText}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onDeleteNotification = async (notificationId) => {
+    const id = String(notificationId || "").trim();
+    if (!id) return;
+
+    const ok = window.confirm("Delete this notification? This action cannot be undone.");
+    if (!ok) return;
+
+    setDeletingId(id);
+    try {
+      await deleteNotification(id);
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      toast.success("Notification deleted");
+    } catch (error) {
+      const messageText = error?.message || error?.code || "Failed to delete notification";
+      toast.error(`Failed to delete notification: ${messageText}`);
+    } finally {
+      setDeletingId("");
     }
   };
 
@@ -265,8 +385,17 @@ export default function NotificationsPage() {
                       <input
                         value={orderLookup}
                         onChange={(e) => setOrderLookup(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            findOrderByLookup();
+                          }
+                        }}
                         placeholder="Enter order id like #abc123"
                       />
+                      <button type="button" className="btn btn-outline" onClick={pasteOrderIdFromClipboard}>
+                        <MdContentPaste /> Paste
+                      </button>
                       <button type="button" className="btn btn-outline" onClick={findOrderByLookup}>
                         <MdTravelExplore /> Fetch
                       </button>
@@ -302,7 +431,7 @@ export default function NotificationsPage() {
                     </select>
                   </div>
                   <div className="selected-order-card">
-                    Broadcasting to {users.length} users
+                    Broadcasting to {broadcastRecipients.length} users
                   </div>
                 </>
               )}
@@ -320,10 +449,6 @@ export default function NotificationsPage() {
                 <label className="notify-check">
                   <input type="checkbox" checked={sendApp} onChange={(e) => setSendApp(e.target.checked)} />
                   Show in app
-                </label>
-                <label className="notify-check">
-                  <input type="checkbox" checked={sendWhatsapp} onChange={(e) => setSendWhatsapp(e.target.checked)} />
-                  Send WhatsApp (WP)
                 </label>
                 <label className="notify-check">
                   <input
@@ -359,7 +484,7 @@ export default function NotificationsPage() {
           <div className="notification-help-body">
             <p>1. Choose Specific Order or All Users.</p>
             <p>2. For order mode, enter order ID and click Fetch.</p>
-            <p>3. Select channels (App, WhatsApp, SMS).</p>
+            <p>3. Select channels (App, SMS).</p>
             <p>4. Send and track in the table below.</p>
           </div>
         </div>
@@ -394,6 +519,7 @@ export default function NotificationsPage() {
                   <th>Sent</th>
                   <th>Date</th>
                   <th>Channel</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -421,6 +547,16 @@ export default function NotificationsPage() {
                           <span className="badge badge-gray">Unknown</span>
                         ) : null}
                       </div>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => onDeleteNotification(item.id)}
+                        disabled={deletingId === item.id}
+                      >
+                        <MdDeleteOutline /> {deletingId === item.id ? "Deleting..." : "Delete"}
+                      </button>
                     </td>
                   </tr>
                 ))}

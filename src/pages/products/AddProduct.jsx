@@ -27,6 +27,7 @@ import {
   createVariant,
   getProductVariants,
   deleteProductVariant,
+  deleteAllProductVariants,
   getAttributes,
 } from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
@@ -731,27 +732,33 @@ export default function AddProduct() {
         toast.success("Product added!");
       }
 
-      if (form.productType === "variable" && productId) {
-        const keptDocIds = new Set();
-        for (const row of variantRows) {
-          const payload = {
-            attribute: row.attribute || normalizeAttr(variationAttributeName || "variant"),
-            value: row.value,
-            sku: row.sku.trim(),
-            price: Number(row.price) || 0,
-            regularPrice: Number(row.regularPrice) || 0,
-            salePrice: Number(row.salePrice) || 0,
-            stock: Number(row.stock) || 0,
-            colorCode: row.colorCode || "",
-            image: row.image || "",
-          };
-          const created = await createVariant(productId, payload);
-          keptDocIds.add(created.id);
-        }
+      if (productId) {
+        if (form.productType === "variable") {
+          const keptDocIds = new Set();
+          for (const row of variantRows) {
+            const payload = {
+              attribute: row.attribute || normalizeAttr(variationAttributeName || "variant"),
+              value: row.value,
+              sku: row.sku.trim(),
+              price: Number(row.price) || 0,
+              regularPrice: Number(row.regularPrice) || 0,
+              salePrice: Number(row.salePrice) || 0,
+              stock: Number(row.stock) || 0,
+              colorCode: row.colorCode || "",
+              image: row.image || "",
+            };
+            const created = await createVariant(productId, payload);
+            keptDocIds.add(created.id);
+          }
 
-        if (isEdit && existingVariantIds.length > 0) {
-          const stale = existingVariantIds.filter((docId) => !keptDocIds.has(docId));
-          await Promise.all(stale.map((docId) => deleteProductVariant(productId, docId)));
+          if (isEdit && existingVariantIds.length > 0) {
+            const stale = existingVariantIds.filter((docId) => !keptDocIds.has(docId));
+            await Promise.all(stale.map((docId) => deleteProductVariant(productId, docId)));
+          }
+        } else if (isEdit) {
+          await deleteAllProductVariants(productId);
+          setVariantRows([]);
+          setExistingVariantIds([]);
         }
       }
 

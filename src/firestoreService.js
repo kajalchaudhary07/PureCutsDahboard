@@ -68,6 +68,17 @@ export const deleteProductVariant = async (productId, variantId) => {
   return await deleteDoc(doc(db, "products", productId, "variants", variantId));
 };
 
+export const deleteAllProductVariants = async (productId) => {
+  const snap = await getDocs(collection(db, "products", productId, "variants"));
+  if (snap.empty) return;
+
+  const batch = writeBatch(db);
+  snap.docs.forEach((variantDoc) => {
+    batch.delete(doc(db, "products", productId, "variants", variantDoc.id));
+  });
+  await batch.commit();
+};
+
 // ─── Attributes ────────────────────────────────────────────────────────────────
 export const getAttributes = () => getAll("attributes");
 export const addAttribute = (data) => addItem("attributes", data);
@@ -644,23 +655,59 @@ export const updateOrder = (id, data) => updateItem("orders", id, data);
 export const deleteOrder = (id) => deleteItem("orders", id);
 
 // ─── Notifications ───────────────────────────────────────────────────────────
-export const getNotifications = async () => {
-  try {
-    const snap = await getDocs(
-      query(collection(db, "notifications"), orderBy("createdAt", "desc"))
-    );
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  } catch {
-    const snap = await getDocs(collection(db, "notifications"));
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  }
+const normalizeNotification = (raw = {}) => {
+  const targetType = String(raw.targetType || raw.audience || "")
+    .trim()
+    .toLowerCase();
+  const channels = raw.channels || {};
+
+  return {
+    ...raw,
+    targetType,
+    orderRef: raw.orderRef || raw.orderId || "",
+    type:
+      raw.type ||
+      (targetType === "all" || raw.audience === "all_users"
+        ? "broadcast"
+        : "order_status"),
+    audience:
+      raw.audience ||
+      (targetType === "all" ? "all_users" : "specific_user"),
+    customerName: raw.customerName || raw.userName || "",
+    channels: {
+      app: Boolean(channels.app ?? channels.push),
+      push: Boolean(channels.push ?? channels.app),
+      sms: Boolean(channels.sms),
+      whatsapp: Boolean(channels.whatsapp),
+    },
+  };
 };
 
-export const createOrderNotification = async ({
+const callSendNotification = async (payload) => {
+  const call = httpsCallable(functions, "sendNotification");
+  const res = await call(payload);
+  return res?.data || null;
+};
+
+const shouldFallbackToLegacyNotification = (error) => {
+  const code = String(error?.code || "").toLowerCase();
+  const msg = String(error?.message || "").toLowerCase();
+
+  return (
+    code.includes("not-found") ||
+    code.includes("unavailable") ||
+    code.includes("internal") ||
+    msg.includes("sendnotification") ||
+    msg.includes("function")
+  );
+};
+
+const legacyCreateOrderNotification = async ({
   order,
   status,
   title,
   message,
+  sendApp,
   sendSms,
   sendWhatsapp,
   createdBy,
@@ -683,8 +730,10 @@ export const createOrderNotification = async ({
     title,
     message,
     type: "order_status",
+    targetType: "specific",
     channels: {
-      app: true,
+      app: Boolean(sendApp),
+      push: Boolean(sendApp),
       sms: Boolean(sendSms),
       whatsapp: Boolean(sendWhatsapp),
     },
@@ -703,7 +752,7 @@ export const createOrderNotification = async ({
       phone: payload.phone,
       message,
       status: "pending",
-      source: "dashboard_notifications",
+      source: "dashboard_notifications_legacy_fallback",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -716,13 +765,169 @@ export const createOrderNotification = async ({
       phone: payload.phone,
       message,
       status: "pending",
-      source: "dashboard_notifications",
+      source: "dashboard_notifications_legacy_fallback",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   }
 
-  return notifRef;
+  return { success: true, pushSent: Boolean(sendApp) ? 1 : 0, fallback: true };
+};
+
+const chunk = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
+const legacyCreateBroadcastNotification = async ({
+  title,
+  message,
+  type,
+  users,
+  sendApp,
+  sendWhatsapp,
+  createdBy,
+}) => {
+  const payload = {
+    title,
+    message,
+    type: type || "broadcast",
+    targetType: "all",
+    audience: "all_users",
+    userCount: (users || []).length,
+    channels: {
+      app: Boolean(sendApp),
+      push: Boolean(sendApp),
+      whatsapp: Boolean(sendWhatsapp),
+      sms: false,
+    },
+    sentAt: serverTimestamp(),
+    createdBy: createdBy || "admin",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const notifRef = await addDoc(collection(db, "notifications"), payload);
+
+  if (sendApp && (users || []).length) {
+    const groups = chunk(users, 350);
+    for (const group of groups) {
+      const batch = writeBatch(db);
+      group.forEach((user) => {
+        const ref = doc(collection(db, "userNotifications"));
+        batch.set(ref, {
+          notificationId: notifRef.id,
+          userId: user.uid || user.id,
+          title,
+          message,
+          type,
+          read: false,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+  }
+
+  if (sendWhatsapp && (users || []).length) {
+    const phoneUsers = users.filter((u) => u.phone || u.mobile || u.phoneNumber);
+    const groups = chunk(phoneUsers, 350);
+    for (const group of groups) {
+      const batch = writeBatch(db);
+      group.forEach((user) => {
+        const ref = doc(collection(db, "whatsappQueue"));
+        batch.set(ref, {
+          notificationId: notifRef.id,
+          userId: user.uid || user.id,
+          phone: user.phone || user.mobile || user.phoneNumber,
+          message,
+          status: "pending",
+          source: "dashboard_broadcast_legacy_fallback",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+  }
+
+  return { success: true, pushSent: Boolean(sendApp) ? 1 : 0, fallback: true };
+};
+
+export const getNotifications = async () => {
+  try {
+    const snap = await getDocs(
+      query(collection(db, "notifications"), orderBy("createdAt", "desc"))
+    );
+    return snap.docs.map((d) => normalizeNotification({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "notifications"));
+    return snap.docs.map((d) => normalizeNotification({ id: d.id, ...d.data() }));
+  }
+};
+
+export const deleteNotification = async (id) => {
+  const notificationId = String(id || "").trim();
+  if (!notificationId) {
+    throw new Error("Notification id is required");
+  }
+
+  await deleteItem("notifications", notificationId);
+};
+
+export const createOrderNotification = async ({
+  order,
+  status,
+  title,
+  message,
+  sendApp = true,
+  sendSms,
+  sendWhatsapp,
+  createdBy,
+}) => {
+  const orderId = String(order?.id || "").trim();
+  if (!orderId) {
+    throw new Error("Valid order id is required for order notification");
+  }
+
+  try {
+    return await callSendNotification({
+      targetType: "specific",
+      orderId,
+      title,
+      message,
+      type: status ? "order_status" : "custom",
+      channels: {
+        push: Boolean(sendApp),
+        whatsapp: Boolean(sendWhatsapp),
+        sms: Boolean(sendSms),
+      },
+      createdBy,
+    });
+  } catch (error) {
+    if (Boolean(sendApp)) {
+      throw new Error(
+        "Live push service is unavailable right now. Please retry in a moment."
+      );
+    }
+
+    if (!shouldFallbackToLegacyNotification(error)) {
+      throw error;
+    }
+
+    return await legacyCreateOrderNotification({
+      order,
+      status,
+      title,
+      message,
+      sendApp,
+      sendSms,
+      sendWhatsapp,
+      createdBy,
+    });
+  }
 };
 
 export const getUsers = async () => {
@@ -798,12 +1003,6 @@ export const getUsersWithOrderCounts = async () => {
   return customersWithOrders;
 };
 
-const chunk = (arr, size) => {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-};
-
 export const createBroadcastNotification = async ({
   title,
   message,
@@ -813,69 +1012,40 @@ export const createBroadcastNotification = async ({
   sendWhatsapp,
   createdBy,
 }) => {
-  const payload = {
-    title,
-    message,
-    type,
-    audience: "all_users",
-    userCount: users.length,
-    channels: {
-      app: Boolean(sendApp),
-      whatsapp: Boolean(sendWhatsapp),
-    },
-    sentAt: serverTimestamp(),
-    createdBy: createdBy || "admin",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-
-  const notifRef = await addDoc(collection(db, "notifications"), payload);
-
-  if (sendApp && users.length) {
-    const groups = chunk(users, 350);
-    for (const group of groups) {
-      const batch = writeBatch(db);
-      group.forEach((user) => {
-        const ref = doc(collection(db, "userNotifications"));
-        batch.set(ref, {
-          notificationId: notifRef.id,
-          userId: user.uid || user.id,
-          title,
-          message,
-          type,
-          read: false,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
+  try {
+    return await callSendNotification({
+      targetType: "all",
+      title,
+      message,
+      type: type || "broadcast",
+      channels: {
+        push: Boolean(sendApp),
+        whatsapp: Boolean(sendWhatsapp),
+        sms: false,
+      },
+      createdBy,
+    });
+  } catch (error) {
+    if (Boolean(sendApp)) {
+      throw new Error(
+        "Live push service is unavailable right now. Please retry in a moment."
+      );
     }
-  }
 
-  if (sendWhatsapp && users.length) {
-    const phoneUsers = users.filter((u) => u.phone || u.mobile || u.phoneNumber);
-    const groups = chunk(phoneUsers, 350);
-
-    for (const group of groups) {
-      const batch = writeBatch(db);
-      group.forEach((user) => {
-        const ref = doc(collection(db, "whatsappQueue"));
-        batch.set(ref, {
-          notificationId: notifRef.id,
-          userId: user.uid || user.id,
-          phone: user.phone || user.mobile || user.phoneNumber,
-          message,
-          status: "pending",
-          source: "dashboard_broadcast",
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
+    if (!shouldFallbackToLegacyNotification(error)) {
+      throw error;
     }
-  }
 
-  return notifRef;
+    return await legacyCreateBroadcastNotification({
+      title,
+      message,
+      type,
+      users,
+      sendApp,
+      sendWhatsapp,
+      createdBy,
+    });
+  }
 };
 
 // ─── Admins ───────────────────────────────────────────────────────────────────
