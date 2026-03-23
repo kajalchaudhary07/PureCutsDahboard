@@ -63,7 +63,7 @@ export default function SubCategoriesList() {
 
   const uploadImage = async () => {
     if (!imageFile) return form.image || "";
-    const storageRef = ref(storage, `subcategories/${Date.now()}_${imageFile.name}`);
+    const storageRef = ref(storage, `subCategories/${Date.now()}_${imageFile.name}`);
     return new Promise((resolve, reject) => {
       const task = uploadBytesResumable(storageRef, imageFile);
       task.on("state_changed", null, reject, () =>
@@ -92,8 +92,10 @@ export default function SubCategoriesList() {
       }
       setShowModal(false);
       load();
-    } catch {
-      toast.error("Failed to save sub-category");
+    } catch (error) {
+      const message = error?.message || "Failed to save sub-category";
+      toast.error(message);
+      console.error("Failed to save sub-category:", error);
     } finally {
       setSaving(false);
     }

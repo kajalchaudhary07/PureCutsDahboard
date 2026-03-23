@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import {
   MdAdd,
@@ -7,6 +7,7 @@ import {
   MdCategory,
   MdClose,
 } from "react-icons/md";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
   getSubSubCategories,
   addSubSubCategory,
@@ -15,12 +16,14 @@ import {
   getCategories,
   getSubCategories,
 } from "../../firestoreService";
+import { storage } from "../../firebaseConfig";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const emptyForm = {
   name: "",
   parentCategory: "",
   parentSubCategory: "",
+  image: "",
 };
 
 export default function SubSubCategoriesList() {
@@ -35,6 +38,9 @@ export default function SubSubCategoriesList() {
   const [saving, setSaving] = useState(false);
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterSubCategory, setFilterSubCategory] = useState("All");
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const fileRef = useRef();
 
   const load = async () => {
     setLoading(true);
@@ -73,6 +79,8 @@ export default function SubSubCategoriesList() {
   const openAdd = () => {
     setForm(emptyForm);
     setEditId(null);
+    setImageFile(null);
+    setImagePreview(null);
     setShowModal(true);
   };
 
@@ -81,9 +89,33 @@ export default function SubSubCategoriesList() {
       name: item.name || "",
       parentCategory: item.parentCategory || "",
       parentSubCategory: item.parentSubCategory || "",
+      image: item.image || "",
     });
     setEditId(item.id);
+    setImageFile(null);
+    setImagePreview(item.image || null);
     setShowModal(true);
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+
+  const uploadImage = async () => {
+    if (!imageFile) return form.image || "";
+    const storageRef = ref(
+      storage,
+      `subSubCategories/${Date.now()}_${imageFile.name}`
+    );
+    return new Promise((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef, imageFile);
+      task.on("state_changed", null, reject, () =>
+        getDownloadURL(task.snapshot.ref).then(resolve)
+      );
+    });
   };
 
   const handleSave = async (e) => {
@@ -104,10 +136,12 @@ export default function SubSubCategoriesList() {
 
     setSaving(true);
     try {
+      const imageUrl = await uploadImage();
       const payload = {
         name,
         parentCategory: form.parentCategory,
         parentSubCategory: form.parentSubCategory,
+        image: imageUrl,
       };
 
       if (editId) {
@@ -135,8 +169,12 @@ export default function SubSubCategoriesList() {
 
       setShowModal(false);
       load();
-    } catch {
-      toast.error("Failed to save sub-sub-category");
+    } catch (error) {
+      const msg =
+        error?.message?.replace("Firebase: ", "") ||
+        "Failed to save sub-sub-category";
+      console.error("[SubSubCategories] Save failed:", error);
+      toast.error(msg);
     } finally {
       setSaving(false);
     }
@@ -213,6 +251,34 @@ export default function SubSubCategoriesList() {
             </div>
             <form onSubmit={handleSave}>
               <div className="form-grid single">
+                <div className="form-group">
+                  <label>Icon / Image</label>
+                  <div className="img-upload" onClick={() => fileRef.current.click()}>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                    />
+                    {imagePreview ? (
+                      <img src={imagePreview} className="img-preview" alt="preview" />
+                    ) : (
+                      <MdCategory style={{ fontSize: 36, color: "var(--text-secondary)" }} />
+                    )}
+                    <div className="img-upload-label"><span>Upload icon</span></div>
+                  </div>
+                  <input
+                    placeholder="Or paste image URL…"
+                    value={!imageFile ? form.image : ""}
+                    onChange={(e) => {
+                      setImageFile(null);
+                      setImagePreview(e.target.value || null);
+                      setForm((f) => ({ ...f, image: e.target.value }));
+                    }}
+                    style={{ marginTop: 8 }}
+                  />
+                </div>
+
                 <div className="form-group">
                   <label>Parent Category *</label>
                   <select
@@ -335,6 +401,7 @@ export default function SubSubCategoriesList() {
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>Icon</th>
                   <th>Sub-Sub-Category</th>
                   <th>Parent Category</th>
                   <th>Parent Sub-Category</th>
@@ -346,6 +413,13 @@ export default function SubSubCategoriesList() {
                 {filtered.map((row, i) => (
                   <tr key={row.id}>
                     <td className="text-muted">{i + 1}</td>
+                    <td>
+                      {row.image ? (
+                        <img src={row.image} alt={row.name} className="table-img" />
+                      ) : (
+                        <div className="no-img"><MdCategory /></div>
+                      )}
+                    </td>
                     <td className="font-medium">{row.name}</td>
                     <td>
                       {row.parentCategory ? (

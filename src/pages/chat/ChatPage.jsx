@@ -20,6 +20,7 @@ import {
   MdSearch,
   MdSend,
 } from "react-icons/md";
+import { toast } from "react-toastify";
 import { db, storage } from "../../firebaseConfig";
 import { useAuth } from "../../auth/AuthProvider";
 
@@ -46,6 +47,37 @@ export default function ChatPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const messageListRef = useRef(null);
   const mediaInputRef = useRef(null);
+  const hasLoadedThreadsRef = useRef(false);
+  const previousUnreadByThreadRef = useRef(new Map());
+  const loadedMessageSnapshotByChatRef = useRef(new Set());
+  const notifiedMessageIdsRef = useRef(new Set());
+
+  const notifyIncomingMessage = ({ customerName, text, messageId }) => {
+    if (messageId) {
+      if (notifiedMessageIdsRef.current.has(messageId)) return;
+      notifiedMessageIdsRef.current.add(messageId);
+    }
+
+    const preview = String(text || "New message").trim() || "New message";
+    const title = String(customerName || "Customer").trim() || "Customer";
+
+    toast.info(`New message from ${title}: ${preview}`, {
+      autoClose: 5000,
+      position: "top-right",
+    });
+
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+
+    try {
+      new Notification(`New message from ${title}`, {
+        body: preview,
+        tag: `chat-${title}`,
+      });
+    } catch {
+      // Browser notification is best effort.
+    }
+  };
 
   const toMillis = (value) => {
     if (!value) return 0;
@@ -124,6 +156,15 @@ export default function ChatPage() {
   }, [mediaPreviewUrl]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {
+        // Permission prompt may be blocked by browser; keep toast fallback.
+      });
+    }
+  }, []);
+
+  useEffect(() => {
     setLoadingThreads(true);
     const chatsQuery = query(
       collection(db, "chats"),
@@ -151,8 +192,30 @@ export default function ChatPage() {
               data.lastServerTimestamp || data.lastTimestamp || data.updatedAt
             ),
             latest: String(data.lastMessage || "No messages yet"),
+            lastMessageBy: String(data.lastMessageBy || "").trim(),
           };
         });
+
+        if (hasLoadedThreadsRef.current) {
+          nextThreads.forEach((thread) => {
+            const previousUnread = Number(previousUnreadByThreadRef.current.get(thread.id) || 0);
+            const nextUnread = Number(thread.unread || 0);
+            const fromCustomer = thread.lastMessageBy && thread.lastMessageBy !== user?.uid;
+
+            if (nextUnread > previousUnread && fromCustomer) {
+              notifyIncomingMessage({
+                customerName: thread.customer,
+                text: thread.latest,
+                messageId: `thread-${thread.id}-${nextUnread}`,
+              });
+            }
+          });
+        }
+
+        previousUnreadByThreadRef.current = new Map(
+          nextThreads.map((thread) => [thread.id, Number(thread.unread || 0)])
+        );
+        hasLoadedThreadsRef.current = true;
 
         setThreads(nextThreads);
         setLoadingThreads(false);
@@ -170,7 +233,7 @@ export default function ChatPage() {
     );
 
     return () => unsub();
-  }, []);
+  }, [user?.uid]);
 
   const filteredThreads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -203,6 +266,9 @@ export default function ChatPage() {
     const unsub = onSnapshot(
       messagesQuery,
       async (snap) => {
+        const currentChatId = activeThread.chatId;
+        const hasLoadedCurrentChat = loadedMessageSnapshotByChatRef.current.has(currentChatId);
+
         const nextMessages = snap.docs.map((d) => {
           const data = d.data() || {};
           const resolvedTime = resolveMessageTime(data);
@@ -235,6 +301,24 @@ export default function ChatPage() {
           if (a._sortMs === b._sortMs) return a.id.localeCompare(b.id);
           return a._sortMs - b._sortMs;
         });
+
+        if (hasLoadedCurrentChat) {
+          snap.docChanges().forEach((change) => {
+            if (change.type !== "added") return;
+            const data = change.doc.data() || {};
+            const senderRole = String(data.senderRole || "").toLowerCase();
+            const senderId = String(data.senderId || "").trim();
+            if (senderRole !== "user" || senderId === user?.uid) return;
+
+            notifyIncomingMessage({
+              customerName: activeThread.customer,
+              text: String(data.text || data.message || "New message").trim(),
+              messageId: change.doc.id,
+            });
+          });
+        } else {
+          loadedMessageSnapshotByChatRef.current.add(currentChatId);
+        }
 
         setMessages(nextMessages);
         setLoadingMessages(false);
