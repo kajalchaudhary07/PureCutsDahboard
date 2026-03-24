@@ -48,9 +48,13 @@ const getOrderRef = (order) => {
 
 const getCustomer = (order) => {
   const fallbackId = order.userId || order.uid || order.customerId || "";
-  const fallbackContact = order.customerPhone || order.phone || "";
+  const fallbackContact =
+    order.contactDetails?.phone || order.customerPhone || order.phone || "";
+  const receiverName =
+    order.contactDetails?.receiverName || order.receiverName || "";
   return {
     name:
+      receiverName ||
       order.customerName ||
       order.customer?.name ||
       order.userName ||
@@ -62,9 +66,37 @@ const getCustomer = (order) => {
       order.customer?.email ||
       order.email ||
       order.user?.email ||
-      fallbackContact ||
       "—",
+    phone: fallbackContact || "—",
   };
+};
+
+const getAddressLines = (order = {}) => {
+  const delivery =
+    order.deliveryAddress ||
+    order.address ||
+    order.shippingAddress ||
+    order.customer?.address;
+
+  if (!delivery) return [];
+  if (typeof delivery === "string") {
+    return delivery
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  const parts = [
+    delivery.line1,
+    delivery.line2,
+    delivery.landmark,
+    delivery.city,
+    delivery.state,
+    delivery.postalCode || delivery.zip || delivery.pincode,
+    delivery.country,
+  ];
+
+  return parts.map((item) => String(item || "").trim()).filter(Boolean);
 };
 
 const getItemsCount = (order) => {
@@ -107,6 +139,7 @@ const formatInvoiceAmount = (value) => {
 
 const invoiceHtml = (order) => {
   const customer = getCustomer(order);
+  const addressLines = getAddressLines(order);
   const lines = Array.isArray(order.items) ? order.items : [];
   const orderRef = getOrderRef(order);
   const amount = getAmount(order);
@@ -240,6 +273,7 @@ tbody tr:last-child td{border-bottom:none}
         <h4>Billed To</h4>
         <div class="line"><strong>${escapeHtml(customer.name)}</strong></div>
         <div class="line subtle">${escapeHtml(customer.email)}</div>
+        <div class="line subtle">${escapeHtml(customer.phone || "—")}</div>
       </div>
       <div class="card">
         <h4>Order Summary</h4>
@@ -248,6 +282,11 @@ tbody tr:last-child td{border-bottom:none}
         <div class="line">Status: <strong>${escapeHtml(normalizeStatus(order.orderStatus || order.status, "placed").toUpperCase())}</strong></div>
       </div>
     </div>
+
+    ${addressLines.length > 0 ? `<div class="card" style="margin-bottom:16px">
+      <h4>Delivery Address</h4>
+      ${addressLines.map((line) => `<div class="line">${escapeHtml(line)}</div>`).join("")}
+    </div>` : ""}
 
     <table>
       <thead>

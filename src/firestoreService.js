@@ -589,6 +589,12 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
     const ownerId = resolveOrderOwnerId(order);
     const profile = userMap[ownerId] || {};
 
+    const fallbackDeliveryDetails = profile.deliveryDetails || null;
+    const fallbackDeliveryAddress =
+      profile.deliveryAddressDetails || fallbackDeliveryDetails?.deliveryAddress || null;
+    const fallbackContactDetails =
+      profile.contactDetails || fallbackDeliveryDetails?.contactDetails || null;
+
     const enriched = {
       ...order,
       customerName:
@@ -616,6 +622,42 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
         profile.phone ||
         profile.mobile ||
         "",
+      contactDetails:
+        order.contactDetails ||
+        (fallbackContactDetails
+          ? {
+              receiverName:
+                fallbackContactDetails.receiverName ||
+                profile.ownerName ||
+                profile.name ||
+                "",
+              phone:
+                fallbackContactDetails.phone ||
+                profile.phone ||
+                profile.mobile ||
+                "",
+            }
+          : {
+              receiverName:
+                order.customerName || profile.ownerName || profile.name || "",
+              phone:
+                order.customerPhone ||
+                order.phone ||
+                profile.phone ||
+                profile.mobile ||
+                "",
+            }),
+      deliveryDetails: order.deliveryDetails || fallbackDeliveryDetails || null,
+      deliveryPlaced:
+        typeof order.deliveryPlaced === "boolean"
+          ? order.deliveryPlaced
+          : Boolean(order.deliveryDetails?.deliveryPlaced ?? fallbackDeliveryDetails?.deliveryPlaced ?? false),
+      deliveryAddress:
+        order.deliveryAddress ||
+        order.shippingAddress ||
+        order.customer?.address ||
+        fallbackDeliveryAddress ||
+        null,
     };
 
     return normalizeOrder(enriched);

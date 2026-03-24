@@ -46,10 +46,20 @@ const normalizeStatus = (status, fallback = "placed") =>
 
 const getCustomer = (order = {}) => {
   const fallbackId = order.userId || order.uid || order.customerId || "";
-  const fallbackPhone = order.customerPhone || order.phone || order.customer?.phone || "";
+  const fallbackPhone =
+    order.contactDetails?.phone ||
+    order.customerPhone ||
+    order.phone ||
+    order.customer?.phone ||
+    "";
+  const fallbackReceiverName =
+    order.contactDetails?.receiverName ||
+    order.receiverName ||
+    "";
 
   return {
     name:
+      fallbackReceiverName ||
       order.customerName ||
       order.customer?.name ||
       order.userName ||
@@ -90,6 +100,8 @@ const getAddressLines = (order = {}) => {
   }
 
   const parts = [
+    delivery.receiverName,
+    delivery.phone,
     delivery.line1,
     delivery.line2,
     delivery.landmark,
@@ -100,6 +112,20 @@ const getAddressLines = (order = {}) => {
   ];
 
   return parts.map((item) => String(item || "").trim()).filter(Boolean);
+};
+
+const getContactDetails = (order = {}) => {
+  const receiverName =
+    order.contactDetails?.receiverName ||
+    order.customerName ||
+    order.customer?.name ||
+    "";
+  const phone =
+    order.contactDetails?.phone ||
+    order.customerPhone ||
+    order.phone ||
+    "";
+  return { receiverName, phone };
 };
 
 export default function OrderDetailsPage() {
@@ -171,6 +197,7 @@ export default function OrderDetailsPage() {
   }, [orders, search]);
 
   const customer = getCustomer(order || {});
+  const contact = getContactDetails(order || {});
   const addressLines = getAddressLines(order || {});
   const items = getItems(order || {});
   const orderAmount = getAmount(order || {});
@@ -291,6 +318,14 @@ export default function OrderDetailsPage() {
                       ))}
                     </div>
                   )}
+                </div>
+
+                <div className="order-detail-box full">
+                  <h4>Contact Details</h4>
+                  <p>
+                    <strong>{contact.receiverName || "—"}</strong>
+                  </p>
+                  <p>{contact.phone || "—"}</p>
                 </div>
               </div>
 
