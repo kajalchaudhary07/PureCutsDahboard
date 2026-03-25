@@ -2807,7 +2807,7 @@ input:checked + .slider::before { transform: translateX(18px); }
 
 .pe-variant-table th:nth-child(8),
 .pe-variant-table td:nth-child(8) {
-  min-width: 220px;
+  min-width: 320px;
 }
 
 .pe-variant-table .pe-input {
@@ -2817,6 +2817,43 @@ input:checked + .slider::before { transform: translateX(18px); }
 
 .pe-variant-sku-input {
   min-width: 150px;
+}
+
+.pe-variant-image-cell {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.pe-variant-upload-btn {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+}
+
+.pe-variant-upload-status {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pe-variant-delete-btn {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.pe-variant-delete-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
 /* ════════════════════════════════════════════════════════════════════

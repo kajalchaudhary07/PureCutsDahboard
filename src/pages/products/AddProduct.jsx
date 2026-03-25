@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import {
   MdArrowBack,
   MdCloudUpload,
+  MdUploadFile,
   MdImage,
   MdDeleteOutline,
   MdOutlineTipsAndUpdates,
@@ -30,7 +31,7 @@ import {
   deleteAllProductVariants,
   getAttributes,
 } from "../../firestoreService";
-import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
 
 const empty = {
@@ -82,11 +83,14 @@ export default function AddProduct() {
   const [newBrandName, setNewBrandName] = useState("");
   const [variantRows, setVariantRows] = useState([]);
   const [existingVariantIds, setExistingVariantIds] = useState([]);
+  const [variantUploadProgress, setVariantUploadProgress] = useState({});
+  const [variantDeleteProgress, setVariantDeleteProgress] = useState({});
   const fileRef = useRef();
   const additionalRef = useRef();
   const descriptionMediaRef = useRef();
   const shortMediaRef = useRef();
   const descriptionEditorRef = useRef();
+  const variantFileRefs = useRef({});
 
   const normalizeAttr = (value) =>
     value
@@ -520,6 +524,101 @@ export default function AddProduct() {
     });
 
     return Promise.all(uploads);
+  };
+
+  const uploadVariantImage = async (variantKey, file) => {
+    const safeVariantKey = String(variantKey || "variant")
+      .replace(/[^a-z0-9_-]/gi, "_")
+      .toLowerCase();
+    const storageRef = ref(storage, `products/variants/${Date.now()}_${safeVariantKey}_${file.name}`);
+
+    return new Promise((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef, file);
+      task.on(
+        "state_changed",
+        (snap) => {
+          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+          setVariantUploadProgress((prev) => ({ ...prev, [variantKey]: pct }));
+        },
+        reject,
+        () => getDownloadURL(task.snapshot.ref).then(resolve)
+      );
+    });
+  };
+
+  const handleVariantImageSelect = async (variantKey, e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select an image file");
+      return;
+    }
+
+    try {
+      const imageUrl = await uploadVariantImage(variantKey, file);
+      updateVariantRow(variantKey, "image", imageUrl);
+      toast.success("Variant image uploaded");
+    } catch {
+      toast.error("Failed to upload variant image");
+    } finally {
+      setVariantUploadProgress((prev) => {
+        const next = { ...prev };
+        delete next[variantKey];
+        return next;
+      });
+    }
+  };
+
+  const getStoragePathFromUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== "string") return "";
+
+    if (rawUrl.startsWith("gs://")) {
+      const firstSlash = rawUrl.indexOf("/", 5);
+      return firstSlash > -1 ? rawUrl.slice(firstSlash + 1) : "";
+    }
+
+    try {
+      const url = new URL(rawUrl);
+      const marker = "/o/";
+      const markerIndex = url.pathname.indexOf(marker);
+      if (markerIndex === -1) return "";
+
+      const encodedPath = url.pathname.slice(markerIndex + marker.length);
+      return decodeURIComponent(encodedPath);
+    } catch {
+      return "";
+    }
+  };
+
+  const handleVariantImageDelete = async (row) => {
+    if (!row?.variantKey) return;
+    if (!row.image) {
+      updateVariantRow(row.variantKey, "image", "");
+      return;
+    }
+
+    setVariantDeleteProgress((prev) => ({ ...prev, [row.variantKey]: true }));
+
+    try {
+      const objectPath = getStoragePathFromUrl(row.image);
+      if (objectPath && objectPath.startsWith("products/")) {
+        await deleteObject(ref(storage, objectPath));
+      }
+
+      updateVariantRow(row.variantKey, "image", "");
+      toast.success("Variant image removed");
+    } catch {
+      updateVariantRow(row.variantKey, "image", "");
+      toast.warning("Image URL cleared, but storage file could not be deleted");
+    } finally {
+      setVariantDeleteProgress((prev) => {
+        const next = { ...prev };
+        delete next[row.variantKey];
+        return next;
+      });
+    }
   };
 
   const addAttributeFromGlobal = () => {
@@ -1198,12 +1297,50 @@ export default function AddProduct() {
                               />
                             </td>
                             <td>
-                              <input
-                                className="pe-input"
-                                value={row.image}
-                                onChange={(e) => updateVariantRow(row.variantKey, "image", e.target.value)}
-                                placeholder="https://..."
-                              />
+                              <div className="pe-variant-image-cell">
+                                <input
+                                  ref={(el) => {
+                                    if (el) {
+                                      variantFileRefs.current[row.variantKey] = el;
+                                    } else {
+                                      delete variantFileRefs.current[row.variantKey];
+                                    }
+                                  }}
+                                  type="file"
+                                  accept="image/*"
+                                  style={{ display: "none" }}
+                                  onChange={(e) => handleVariantImageSelect(row.variantKey, e)}
+                                />
+                                <input
+                                  className="pe-input"
+                                  value={row.image}
+                                  onChange={(e) => updateVariantRow(row.variantKey, "image", e.target.value)}
+                                  placeholder="https://..."
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-outline btn-sm pe-variant-upload-btn"
+                                  onClick={() => variantFileRefs.current[row.variantKey]?.click()}
+                                  title="Upload image"
+                                >
+                                  <MdUploadFile /> Upload
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline btn-sm pe-variant-delete-btn"
+                                  onClick={() => handleVariantImageDelete(row)}
+                                  title="Delete image"
+                                  disabled={Boolean(variantDeleteProgress[row.variantKey])}
+                                >
+                                  <MdDeleteOutline />
+                                  {variantDeleteProgress[row.variantKey] ? "Deleting..." : "Delete"}
+                                </button>
+                                {variantUploadProgress[row.variantKey] !== undefined && (
+                                  <div className="pe-variant-upload-status">
+                                    Uploading... {variantUploadProgress[row.variantKey]}%
+                                  </div>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
