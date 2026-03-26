@@ -120,6 +120,11 @@ const getAmount = (order) =>
 const getOrderDate = (order) =>
   order.createdAt || order.orderDate || order.date || order.placedAt || null;
 
+const getPaymentMode = (order) =>
+  String(order.paymentMethod || order.paymentMode || "cod")
+    .trim()
+    .toUpperCase();
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -451,6 +456,7 @@ export default function OrdersList() {
                   <th>Items</th>
                   <th>Order Status</th>
                   <th>Payment Status</th>
+                  <th>Payment Mode</th>
                   <th>Amount</th>
                   <th>Date</th>
                   <th>Action</th>
@@ -496,6 +502,9 @@ export default function OrdersList() {
                         <span className={`badge ${paymentStatus === "paid" ? "badge-green" : "badge-gray"}`}>
                           {paymentStatus.charAt(0).toUpperCase() + paymentStatus.slice(1)}
                         </span>
+                      </td>
+                      <td>
+                        <span className="badge badge-blue">{getPaymentMode(order)}</span>
                       </td>
                       <td className="font-medium">{formatCurrency(getAmount(order))}</td>
                       <td className="text-muted">{formatDate(getOrderDate(order))}</td>

@@ -47,6 +47,7 @@ export default function ChatPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const messageListRef = useRef(null);
   const mediaInputRef = useRef(null);
+  const composerInputRef = useRef(null);
   const hasLoadedThreadsRef = useRef(false);
   const previousUnreadByThreadRef = useRef(new Map());
   const loadedMessageSnapshotByChatRef = useRef(new Set());
@@ -147,6 +148,15 @@ export default function ChatPage() {
     if (mediaInputRef.current) {
       mediaInputRef.current.value = "";
     }
+  };
+
+  const scrollMessagesToBottom = (smooth = false) => {
+    const el = messageListRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
   };
 
   useEffect(() => {
@@ -373,9 +383,12 @@ export default function ChatPage() {
   }, [activeThread?.chatId]);
 
   useEffect(() => {
-    if (!messageListRef.current) return;
-    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+    scrollMessagesToBottom(false);
   }, [messages]);
+
+  useEffect(() => {
+    scrollMessagesToBottom(false);
+  }, [activeThread?.chatId, selectedMedia]);
 
   const refreshChats = () => {
     setError("");
@@ -492,6 +505,7 @@ export default function ChatPage() {
           step,
           selectedCategory: "",
           selectedQuantity: "",
+          selectedRequirement: "",
           isCompleted: step === "HUMAN",
         },
         updatedAt: serverTimestamp(),
@@ -731,8 +745,12 @@ export default function ChatPage() {
                 </button>
 
                 <input
+                  ref={composerInputRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
+                  onFocus={() => {
+                    scrollMessagesToBottom(true);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") sendMessage();
                   }}

@@ -520,6 +520,12 @@ const normalizeOrder = (raw = {}) => {
     .trim()
     .toLowerCase();
 
+  const paymentMethod = String(
+    raw.paymentMethod || raw.paymentMode || raw.billDetails?.paymentMethod || "cod"
+  )
+    .trim()
+    .toLowerCase();
+
   return {
     ...raw,
     items: normalizedItems,
@@ -536,6 +542,8 @@ const normalizeOrder = (raw = {}) => {
     orderStatus,
     status: orderStatus,
     paymentStatus,
+    paymentMethod,
+    paymentMode: paymentMethod,
   };
 };
 
@@ -1248,16 +1256,10 @@ const DEFAULT_SUPPORT_BOT_CONFIG = {
       text: "Select product type:",
       options: ["Skincare", "Hair", "Equipment", "Mixed"],
     },
-    QUANTITY: {
-      text: "Select quantity range:",
-      options: ["5-10", "10-25", "25-50", "50+"],
+    BULK_INPUT: {
+      text: "Please type your bulk order requirement (products, quantity, city, budget):",
+      options: [],
     },
-  },
-  discounts: {
-    "5-10": "5%",
-    "10-25": "8%",
-    "25-50": "12%",
-    "50+": "15%",
   },
 };
 
@@ -1271,10 +1273,6 @@ export const getSupportBotConfig = async () => {
     steps: {
       ...DEFAULT_SUPPORT_BOT_CONFIG.steps,
       ...(snap.data()?.steps || {}),
-    },
-    discounts: {
-      ...DEFAULT_SUPPORT_BOT_CONFIG.discounts,
-      ...(snap.data()?.discounts || {}),
     },
   };
 };

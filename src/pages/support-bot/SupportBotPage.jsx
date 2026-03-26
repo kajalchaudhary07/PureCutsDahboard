@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import {
   getBulkLeads,
@@ -20,16 +20,10 @@ export default function SupportBotPage() {
         text: "Select product type:",
         options: ["Skincare", "Hair", "Equipment", "Mixed"],
       },
-      QUANTITY: {
-        text: "Select quantity range:",
-        options: ["5-10", "10-25", "25-50", "50+"],
+      BULK_INPUT: {
+        text: "Please type your bulk order requirement (products, quantity, city, budget):",
+        options: [],
       },
-    },
-    discounts: {
-      "5-10": "5%",
-      "10-25": "8%",
-      "25-50": "12%",
-      "50+": "15%",
     },
   });
   const [bulkLeads, setBulkLeads] = useState([]);
@@ -90,11 +84,15 @@ export default function SupportBotPage() {
 
   const normalizeConfigForSave = () => {
     const nextSteps = Object.fromEntries(
-      Object.entries(botConfig.steps || {}).map(([stepKey, stepValue]) => {
+      Object.entries(botConfig.steps || {})
+      .filter(([stepKey]) => stepKey !== "QUANTITY")
+      .map(([stepKey, stepValue]) => {
         const raw = String(
           stepOptionDrafts[stepKey] ?? (stepValue?.options || []).join(", ")
         );
-        const options = raw
+        const options = stepKey === "BULK_INPUT"
+          ? []
+          : raw
           .split(",")
           .map((item) => item.trim())
           .filter(Boolean);
@@ -115,16 +113,6 @@ export default function SupportBotPage() {
     };
   };
 
-  const updateDiscount = (range, value) => {
-    setBotConfig((prev) => ({
-      ...prev,
-      discounts: {
-        ...prev.discounts,
-        [range]: value,
-      },
-    }));
-  };
-
   const saveBot = async () => {
     setSaving(true);
     try {
@@ -139,11 +127,6 @@ export default function SupportBotPage() {
       setSaving(false);
     }
   };
-
-  const discountRows = useMemo(
-    () => Object.entries(botConfig.discounts || {}),
-    [botConfig.discounts]
-  );
 
   return (
     <>
@@ -185,7 +168,9 @@ export default function SupportBotPage() {
         </div>
 
         <div className="form-grid single">
-          {Object.entries(botConfig.steps || {}).map(([stepKey, stepValue]) => (
+          {Object.entries(botConfig.steps || {})
+            .filter(([stepKey]) => stepKey !== "QUANTITY")
+            .map(([stepKey, stepValue]) => (
             <div className="form-group" key={stepKey}>
               <label>{stepKey} Message</label>
               <textarea
@@ -194,34 +179,26 @@ export default function SupportBotPage() {
                 placeholder={`Enter ${stepKey} message`}
                 disabled={loading}
               />
-              <label>{stepKey} Options (comma separated)</label>
-              <input
-                value={
-                  stepOptionDrafts[stepKey] ?? (stepValue?.options || []).join(", ")
-                }
-                onChange={(e) => updateStepOptionsDraft(stepKey, e.target.value)}
-                placeholder="Option A, Option B, Option C"
-                disabled={loading}
-              />
+              {stepKey !== "BULK_INPUT" ? (
+                <>
+                  <label>{stepKey} Options (comma separated)</label>
+                  <input
+                    value={
+                      stepOptionDrafts[stepKey] ?? (stepValue?.options || []).join(", ")
+                    }
+                    onChange={(e) => updateStepOptionsDraft(stepKey, e.target.value)}
+                    placeholder="Option A, Option B, Option C"
+                    disabled={loading}
+                  />
+                </>
+              ) : (
+                <p className="text-muted" style={{ marginTop: 8 }}>
+                  This step accepts free text from user after clicking Bulk Order.
+                </p>
+              )}
             </div>
           ))}
 
-          <div className="form-group">
-            <label>Discount Slabs</label>
-            <div className="notify-channel-grid">
-              {discountRows.map(([range, value]) => (
-                <div key={range} className="form-group">
-                  <label>{range}</label>
-                  <input
-                    value={value}
-                    onChange={(e) => updateDiscount(range, e.target.value)}
-                    placeholder="e.g. 10%"
-                    disabled={loading}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </section>
 
@@ -238,7 +215,7 @@ export default function SupportBotPage() {
                 <div>
                   <strong>{lead.category || "Category N/A"}</strong>
                   <p>
-                    Qty {lead.quantity || "-"} • Discount {lead.discount || "-"}
+                    Requirement: {lead.requirement || "-"}
                   </p>
                 </div>
                 <span className="badge badge-blue">{lead.userId || "user"}</span>

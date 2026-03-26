@@ -128,6 +128,11 @@ const getContactDetails = (order = {}) => {
   return { receiverName, phone };
 };
 
+const getPaymentMode = (order = {}) =>
+  String(order.paymentMethod || order.paymentMode || "cod")
+    .trim()
+    .toUpperCase();
+
 export default function OrderDetailsPage() {
   const { id: routeOrderId } = useParams();
   const navigate = useNavigate();
@@ -303,6 +308,9 @@ export default function OrderDetailsPage() {
                     Payment: <span className={`badge ${paymentStatus === "paid" ? "badge-green" : "badge-gray"}`}>
                       {paymentStatus.toUpperCase()}
                     </span>
+                  </p>
+                  <p>
+                    Payment Mode: <strong>{getPaymentMode(order)}</strong>
                   </p>
                   <p>Total: <strong>{formatCurrency(orderAmount)}</strong></p>
                 </div>
