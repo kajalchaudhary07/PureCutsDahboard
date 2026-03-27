@@ -80,6 +80,10 @@ const menuSections = [
     ],
   },
   {
+    group: "Boat Management",
+    items: [{ label: "Boat", path: "/bot", icon: <MdSmartToy /> }],
+  },
+  {
     group: "Admin Management",
     items: [{ label: "Admin", path: "/admin", icon: <MdAdminPanelSettings /> }],
   },

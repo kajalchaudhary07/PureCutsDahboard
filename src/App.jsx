@@ -19,6 +19,7 @@ import OrdersList from "./pages/orders/OrdersList";
 import OrderDetailsPage from "./pages/orders/OrderDetailsPage";
 import NotificationsPage from "./pages/notifications/NotificationsPage";
 import ChatPage from "./pages/chat/ChatPage";
+import BotPage from "./pages/bot/BotPage";
 import DashboardPage from "./pages/dashboard/DashboardPage";
 import MediaPage from "./pages/media/MediaPage";
 import UnitsPage from "./pages/units/UnitsPage";
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="chat" element={<ChatPage />} />
               <Route path="support-bot" element={<SupportBotPage />} />
               <Route path="image-guide" element={<ImageResolutionGuidePage />} />
+              <Route path="bot" element={<BotPage />} />
               <Route path="admin" element={<AdminManagement />} />
               <Route path="roles" element={<RolesManagement />} />
               <Route path="profile" element={<ProfilePage />} />

@@ -708,7 +708,7 @@ export default function ChatPage() {
 
           <div className="chat-thread-list">
             {loadingThreads ? (
-              <div className="empty-state chat-empty">Loading conversations…</div>
+              <div className="empty-state chat-empty">Loading conversationsGǪ</div>
             ) : filteredThreads.length === 0 ? (
               <div className="empty-state chat-empty">No conversations found.</div>
             ) : (
@@ -774,7 +774,7 @@ export default function ChatPage() {
                     <div className="chat-user-meta">
                       <MdCircle className={`chat-dot ${statusClass[activeThread.status]}`} />
                       {activeThread.status}
-                      <span className="chat-user-sep">•</span>
+                      <span className="chat-user-sep">G��</span>
                       {activeThread.email}
                     </div>
                   </div>
@@ -822,7 +822,7 @@ export default function ChatPage() {
                 ) : null}
 
                 {loadingMessages ? (
-                  <div className="empty-state">Loading messages…</div>
+                  <div className="empty-state">Loading messagesGǪ</div>
                 ) : messages.length === 0 ? (
                   <div className="empty-state">No messages yet. Start the conversation.</div>
                 ) : messages.map((message) => (
