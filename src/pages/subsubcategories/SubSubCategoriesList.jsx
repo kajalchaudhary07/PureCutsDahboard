@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import {
   MdAdd,
@@ -6,6 +6,7 @@ import {
   MdDelete,
   MdCategory,
   MdClose,
+  MdSort,
 } from "react-icons/md";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
@@ -38,6 +39,7 @@ export default function SubSubCategoriesList() {
   const [saving, setSaving] = useState(false);
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterSubCategory, setFilterSubCategory] = useState("All");
+  const [sortBy, setSortBy] = useState("name_asc");
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const fileRef = useRef();
@@ -191,37 +193,80 @@ export default function SubSubCategoriesList() {
     }
   };
 
-  const categoryNames = ["All", ...categories.map((c) => c.name)];
-  const availableSubCategoryNames = [
+  const getCreatedAtMs = (row) => {
+    const raw = row?.createdAt ?? row?.updatedAt ?? null;
+    if (!raw) return 0;
+    if (typeof raw?.toDate === "function") {
+      const d = raw.toDate();
+      return Number.isFinite(d?.getTime?.()) ? d.getTime() : 0;
+    }
+    if (raw instanceof Date) {
+      return Number.isFinite(raw.getTime()) ? raw.getTime() : 0;
+    }
+    const d = new Date(raw);
+    return Number.isFinite(d.getTime()) ? d.getTime() : 0;
+  };
+
+  const categoryNames = [
     "All",
-    ...subCategories
-      .filter(
-        (s) => filterCategory === "All" || s.parentCategory === filterCategory
-      )
-      .map((s) => s.name),
+    ...Array.from(new Set(categories.map((c) => String(c.name || "").trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    ),
   ];
 
-  const filtered = rows.filter((row) => {
-    const byCategory =
-      filterCategory === "All" || row.parentCategory === filterCategory;
-    const bySub =
-      filterSubCategory === "All" || row.parentSubCategory === filterSubCategory;
-    return byCategory && bySub;
-  });
+  const availableSubCategoryNames = [
+    "All",
+    ...Array.from(
+      new Set(
+        subCategories
+          .filter(
+            (s) => filterCategory === "All" || s.parentCategory === filterCategory
+          )
+          .map((s) => String(s.name || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+  ];
 
-  filtered.sort((a, b) => {
-    const aCat = (a.parentCategory || "").toString();
-    const bCat = (b.parentCategory || "").toString();
-    const catCmp = aCat.localeCompare(bCat);
-    if (catCmp !== 0) return catCmp;
+  const filtered = useMemo(() => {
+    const list = rows.filter((row) => {
+      const byCategory =
+        filterCategory === "All" || row.parentCategory === filterCategory;
+      const bySub =
+        filterSubCategory === "All" || row.parentSubCategory === filterSubCategory;
+      return byCategory && bySub;
+    });
 
-    const aSub = (a.parentSubCategory || "").toString();
-    const bSub = (b.parentSubCategory || "").toString();
-    const subCmp = aSub.localeCompare(bSub);
-    if (subCmp !== 0) return subCmp;
+    list.sort((a, b) => {
+      if (sortBy === "name_desc") {
+        return String(b.name || "").localeCompare(String(a.name || ""), undefined, {
+          sensitivity: "base",
+        });
+      }
+      if (sortBy === "oldest") {
+        return getCreatedAtMs(a) - getCreatedAtMs(b);
+      }
+      if (sortBy === "newest") {
+        return getCreatedAtMs(b) - getCreatedAtMs(a);
+      }
 
-    return (a.name || "").toString().localeCompare((b.name || "").toString());
-  });
+      const aCat = String(a.parentCategory || "");
+      const bCat = String(b.parentCategory || "");
+      const catCmp = aCat.localeCompare(bCat, undefined, { sensitivity: "base" });
+      if (catCmp !== 0) return catCmp;
+
+      const aSub = String(a.parentSubCategory || "");
+      const bSub = String(b.parentSubCategory || "");
+      const subCmp = aSub.localeCompare(bSub, undefined, { sensitivity: "base" });
+      if (subCmp !== 0) return subCmp;
+
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+        sensitivity: "base",
+      });
+    });
+
+    return list;
+  }, [filterCategory, filterSubCategory, rows, sortBy]);
 
   const modalSubCategories = subCategories.filter(
     (s) => !form.parentCategory || s.parentCategory === form.parentCategory
@@ -350,7 +395,7 @@ export default function SubSubCategoriesList() {
 
       <div
         className="card"
-        style={{ marginBottom: 12, padding: 12, display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}
+        style={{ marginBottom: 12, padding: 12, display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr 1fr" }}
       >
         <div>
           <label className="text-muted" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
@@ -380,6 +425,20 @@ export default function SubSubCategoriesList() {
               <option key={name} value={name}>{name}</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="text-muted" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
+            Sort
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <MdSort style={{ color: "#64748b" }} />
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              <option value="name_asc">Name (A → Z)</option>
+              <option value="name_desc">Name (Z → A)</option>
+              <option value="oldest">Oldest → Newest</option>
+              <option value="newest">Newest → Oldest</option>
+            </select>
+          </div>
         </div>
       </div>
 

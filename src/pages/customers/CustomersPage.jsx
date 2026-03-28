@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { MdSearch } from "react-icons/md";
+import { MdDeleteOutline, MdSearch } from "react-icons/md";
 import { toast } from "react-toastify";
-import { getUsersWithOrderCounts, updateUser } from "../../firestoreService";
+import {
+  deleteUser,
+  getUsersWithOrderCountsPaginated,
+  updateUser,
+} from "../../firestoreService";
 
 const SALES_STATUS = ["active", "closeone", "inactive"];
 
@@ -39,32 +43,58 @@ export default function CustomersPage() {
   const [salesStatusByUser, setSalesStatusByUser] = useState({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [deletingCustomerId, setDeletingCustomerId] = useState("");
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
+  const syncSalesStatusMap = (rows) => {
+    setSalesStatusByUser((prev) => {
+      const next = { ...prev };
+      rows.forEach((user) => {
+        const key = user.id || user.uid;
+        if (!key || next[key]) return;
+        const current = String(user.salesStatus || "active").toLowerCase();
+        next[key] = SALES_STATUS.includes(current) ? current : "active";
+      });
+      return next;
+    });
+  };
+
+  const loadCustomers = async ({ append = false } = {}) => {
+    if (append) {
+      if (!hasMore || loadingMore) return;
+      setLoadingMore(true);
+    } else {
       setLoading(true);
-      try {
-        const data = await getUsersWithOrderCounts();
-        setUsers(data);
-        setSalesStatusByUser(() =>
-          Object.fromEntries(
-            data.map((user) => {
-              const current = String(user.salesStatus || "active").toLowerCase();
-              const status = SALES_STATUS.includes(current) ? current : "active";
-              return [user.id || user.uid, status];
-            })
-          )
-        );
-      } catch (e) {
-        console.error("Failed to load customers:", e);
-        toast.error("Failed to load customers");
-        setUsers([]);
-      } finally {
+    }
+
+    try {
+      const page = await getUsersWithOrderCountsPaginated({
+        pageSize: 25,
+        cursor: append ? nextCursor : null,
+      });
+
+      setUsers((prev) => (append ? [...prev, ...page.rows] : page.rows));
+      syncSalesStatusMap(page.rows);
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } catch (e) {
+      console.error("Failed to load customers:", e);
+      toast.error("Failed to load customers");
+      if (!append) setUsers([]);
+    } finally {
+      if (append) {
+        setLoadingMore(false);
+      } else {
         setLoading(false);
       }
-    };
+    }
+  };
 
-    load();
+  useEffect(() => {
+    loadCustomers({ append: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -92,6 +122,41 @@ export default function CustomersPage() {
         const user = users.find((u) => (u.id || u.uid) === userKey);
         return { ...prev, [userKey]: user?.salesStatus || "active" };
       });
+    }
+  };
+
+  const onDeleteCustomer = async (user) => {
+    const userKey = user?.id || user?.uid;
+    if (!userKey || deletingCustomerId) return;
+
+    const customerName = String(user?.name || user?.email || "this customer");
+    const confirmed = window.confirm(
+      `Delete ${customerName}? This will remove the customer profile from dashboard users.`
+    );
+    if (!confirmed) return;
+
+    setDeletingCustomerId(userKey);
+
+    const prevUsers = users;
+    const prevStatusMap = salesStatusByUser;
+
+    setUsers((prev) => prev.filter((u) => (u.id || u.uid) !== userKey));
+    setSalesStatusByUser((prev) => {
+      const next = { ...prev };
+      delete next[userKey];
+      return next;
+    });
+
+    try {
+      await deleteUser(userKey);
+      toast.success("Customer deleted");
+    } catch (e) {
+      console.error("Failed to delete customer:", e);
+      toast.error("Failed to delete customer");
+      setUsers(prevUsers);
+      setSalesStatusByUser(prevStatusMap);
+    } finally {
+      setDeletingCustomerId("");
     }
   };
 
@@ -137,6 +202,7 @@ export default function CustomersPage() {
                   <th>Orders</th>
                   <th>Joining Date</th>
                   <th>Sales Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,6 +243,18 @@ export default function CustomersPage() {
                         ))}
                       </select>
                     </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm btn-icon"
+                        onClick={() => onDeleteCustomer(user)}
+                        disabled={deletingCustomerId === userKey}
+                        title="Delete customer"
+                        aria-label={`Delete ${user.name || user.email || "customer"}`}
+                      >
+                        {deletingCustomerId === userKey ? "..." : <MdDeleteOutline />}
+                      </button>
+                    </td>
                   </tr>
                 );})}
               </tbody>
@@ -184,6 +262,24 @@ export default function CustomersPage() {
           </div>
         )}
       </section>
+
+      {!loading && filtered.length > 0 && (
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+          {hasMore ? (
+            <button
+              className="btn btn-outline"
+              disabled={loadingMore}
+              onClick={() => loadCustomers({ append: true })}
+            >
+              {loadingMore ? "Loading..." : "Load more customers"}
+            </button>
+          ) : (
+            <span className="text-muted" style={{ fontSize: 12 }}>
+              You’ve reached the end of loaded customers.
+            </span>
+          )}
+        </div>
+      )}
     </>
   );
 }

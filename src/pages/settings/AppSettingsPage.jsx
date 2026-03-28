@@ -2,11 +2,15 @@ import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import {
   getBulkLeads,
+  getDashboardMetricsSnapshotMeta,
+  rebuildOrderCounters,
   getSupportBotConfig,
   saveSupportBotConfig,
 } from "../../firestoreService";
+import { useAuth } from "../../auth/AuthProvider";
 
 export default function AppSettingsPage() {
+  const { isSuperAdmin } = useAuth();
   const [settings, setSettings] = useState({
     maintenanceMode: false,
     allowCod: true,
@@ -39,6 +43,57 @@ export default function AppSettingsPage() {
   });
   const [bulkLeads, setBulkLeads] = useState([]);
   const [stepOptionDrafts, setStepOptionDrafts] = useState({});
+  const [rebuildingCounters, setRebuildingCounters] = useState(false);
+  const [maintenanceMeta, setMaintenanceMeta] = useState({
+    loading: true,
+    source: "",
+    updatedAt: null,
+    lastBackfillAt: null,
+    totalOrders: 0,
+    totalRevenue: 0,
+  });
+
+  const toMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toMillis === "function") return value.toMillis();
+    if (typeof value?.toDate === "function") return value.toDate().getTime();
+    if (typeof value === "object") {
+      const seconds = Number(
+        value.seconds ?? value._seconds ?? value.sec ?? value.epochSeconds ?? 0
+      );
+      const nanos = Number(
+        value.nanoseconds ?? value._nanoseconds ?? value.nanos ?? 0
+      );
+      if (Number.isFinite(seconds) && seconds > 0) {
+        return seconds * 1000 + Math.floor((Number.isFinite(nanos) ? nanos : 0) / 1e6);
+      }
+    }
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const formatDateTime = (value) => {
+    const ms = toMillis(value);
+    if (!ms) return "Never";
+    return new Date(ms).toLocaleString();
+  };
+
+  const loadMaintenanceMeta = async () => {
+    setMaintenanceMeta((prev) => ({ ...prev, loading: true }));
+    try {
+      const snapshot = await getDashboardMetricsSnapshotMeta();
+      setMaintenanceMeta({
+        loading: false,
+        source: String(snapshot?.source || ""),
+        updatedAt: snapshot?.updatedAt || null,
+        lastBackfillAt: snapshot?.lastBackfillAt || null,
+        totalOrders: Number(snapshot?.ordersCount || 0),
+        totalRevenue: Number(snapshot?.totalRevenue || 0),
+      });
+    } catch {
+      setMaintenanceMeta((prev) => ({ ...prev, loading: false }));
+    }
+  };
 
   const buildOptionDrafts = (steps = {}) =>
     Object.fromEntries(
@@ -58,6 +113,7 @@ export default function AppSettingsPage() {
         setBotConfig(cfg);
         setBulkLeads(leads);
         setStepOptionDrafts(buildOptionDrafts(cfg.steps));
+        await loadMaintenanceMeta();
       } catch (err) {
         if (!cancelled) {
           toast.error(err?.message || "Could not load support bot config.");
@@ -135,6 +191,35 @@ export default function AppSettingsPage() {
       toast.error(err?.message || "Could not save support bot config.");
     } finally {
       setBotSaving(false);
+    }
+  };
+
+  const handleRebuildOrderCounters = async () => {
+    if (!isSuperAdmin) {
+      toast.error("Only super admins can run maintenance rebuilds.");
+      return;
+    }
+
+    const proceed = window.confirm(
+      "Run order counters backfill now? This may take some time on large datasets."
+    );
+    if (!proceed) return;
+
+    setRebuildingCounters(true);
+    try {
+      const result = await rebuildOrderCounters();
+      if (!result?.ok) {
+        throw new Error("Backfill did not return success.");
+      }
+
+      toast.success(
+        `Backfill complete • Orders: ${result.totalOrders || 0}, Users with orders: ${result.usersWithOrders || 0}`
+      );
+      await loadMaintenanceMeta();
+    } catch (err) {
+      toast.error(err?.message || "Could not rebuild order counters.");
+    } finally {
+      setRebuildingCounters(false);
     }
   };
 
@@ -233,6 +318,79 @@ export default function AppSettingsPage() {
               <div className="font-medium">Current Configuration</div>
               <div className="text-muted">
                 {settings.defaultCurrency} currency with {settings.taxPercent}% tax.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-header">
+            <span className="card-title">Maintenance Tools</span>
+          </div>
+          <div className="settings-list">
+            <div className="settings-row" style={{ alignItems: "center", gap: 12 }}>
+              <div>
+                <strong>Rebuild Order Counters</strong>
+                <p>
+                  Recomputes `users.ordersCount` and dashboard aggregate totals from existing orders.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={handleRebuildOrderCounters}
+                disabled={!isSuperAdmin || rebuildingCounters}
+              >
+                {rebuildingCounters ? "Running..." : "Run Rebuild"}
+              </button>
+            </div>
+            {!isSuperAdmin ? (
+              <p className="text-muted" style={{ marginTop: 8 }}>
+                Only super admins can run maintenance rebuilds.
+              </p>
+            ) : null}
+
+            <div className="selected-order-card" style={{ marginTop: 10 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <div className="font-medium">Backfill Status</div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={loadMaintenanceMeta}
+                  disabled={maintenanceMeta.loading || rebuildingCounters}
+                >
+                  {maintenanceMeta.loading ? "Refreshing..." : "Refresh status"}
+                </button>
+              </div>
+              <div className="text-muted" style={{ marginTop: 4 }}>
+                Last backfill run: {maintenanceMeta.loading
+                  ? "Loading..."
+                  : formatDateTime(maintenanceMeta.lastBackfillAt)}
+              </div>
+              <div className="text-muted">
+                Aggregate updated: {maintenanceMeta.loading
+                  ? "Loading..."
+                  : formatDateTime(maintenanceMeta.updatedAt)}
+              </div>
+              <div className="text-muted">
+                Current aggregate source: {maintenanceMeta.loading
+                  ? "Loading..."
+                  : (maintenanceMeta.source || "unknown")}
+              </div>
+              <div className="text-muted">
+                Orders tracked: {maintenanceMeta.loading ? "..." : maintenanceMeta.totalOrders}
+              </div>
+              <div className="text-muted">
+                Revenue tracked: {maintenanceMeta.loading
+                  ? "..."
+                  : `₹${Number(maintenanceMeta.totalRevenue || 0).toLocaleString("en-IN")}`}
               </div>
             </div>
           </div>

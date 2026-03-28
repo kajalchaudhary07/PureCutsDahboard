@@ -13,7 +13,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { useAuth } from "../../auth/AuthProvider";
 import { storage } from "../../firebaseConfig";
 import {
-  getProductReviews,
+  getProductReviewsPaginated,
   addProductReview,
   setProductReviewStatus,
   deleteProductReview,
@@ -108,6 +108,9 @@ export default function ProductReviews() {
   const { user } = useAuth();
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -118,15 +121,30 @@ export default function ProductReviews() {
   const [selected, setSelected] = useState(() => new Set());
   const mediaInputRef = useRef(null);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ append = false } = {}) => {
+    if (append) {
+      if (!hasMore || loadingMore) return;
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const data = await getProductReviews();
-      setReviews(data);
+      const page = await getProductReviewsPaginated({
+        pageSize: 40,
+        cursor: append ? nextCursor : null,
+      });
+      setReviews((prev) => (append ? [...prev, ...page.rows] : page.rows));
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
     } catch {
       toast.error("Failed to load reviews");
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -169,7 +187,7 @@ export default function ProductReviews() {
         review.__col || "productReviews"
       );
       toast.success(`Review marked as ${nextStatus}`);
-      load();
+      load({ append: false });
     } catch (e) {
       const message =
         e?.message?.replace(
@@ -192,7 +210,7 @@ export default function ProductReviews() {
         review.__col || "productReviews"
       );
       toast.success("Review deleted");
-      load();
+      load({ append: false });
     } catch {
       toast.error("Failed to delete review");
     }
@@ -243,7 +261,7 @@ export default function ProductReviews() {
       setMediaFile(null);
       setMediaPreview("");
       setFormOpen(false);
-      load();
+      load({ append: false });
     } catch {
       toast.error("Failed to create review");
     } finally {
@@ -261,6 +279,25 @@ export default function ProductReviews() {
           <div className="breadcrumb">Dashboard / <span>All Reviews</span></div>
         </div>
       </div>
+
+      {!loading && filtered.length > 0 ? (
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+          {hasMore ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={loadingMore}
+              onClick={() => load({ append: true })}
+            >
+              {loadingMore ? "Loading..." : "Load more reviews"}
+            </button>
+          ) : (
+            <span className="text-muted" style={{ fontSize: 12 }}>
+              End of reviews list
+            </span>
+          )}
+        </div>
+      ) : null}
 
       <div className="review-top-actions">
         <button className="btn btn-primary review-create-btn" onClick={() => setFormOpen(true)}>

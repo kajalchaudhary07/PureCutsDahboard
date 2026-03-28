@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { MdAdd, MdEdit, MdDelete, MdAccountTree, MdClose } from "react-icons/md";
+import { MdAdd, MdEdit, MdDelete, MdAccountTree, MdClose, MdSort } from "react-icons/md";
 import {
   getSubCategories, addSubCategory, updateSubCategory, deleteSubCategory,
   getCategories,
@@ -23,6 +23,7 @@ export default function SubCategoriesList() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [filterCat, setFilterCat] = useState("All");
+  const [sortBy, setSortBy] = useState("name_asc");
   const fileRef = useRef();
 
   const load = async () => {
@@ -112,12 +113,52 @@ export default function SubCategoriesList() {
     }
   };
 
-  const catNames = ["All", ...categories.map((c) => c.name)];
+  const getCreatedAtMs = (row) => {
+    const raw = row?.createdAt ?? row?.updatedAt ?? null;
+    if (!raw) return 0;
+    if (typeof raw?.toDate === "function") {
+      const d = raw.toDate();
+      return Number.isFinite(d?.getTime?.()) ? d.getTime() : 0;
+    }
+    if (raw instanceof Date) {
+      return Number.isFinite(raw.getTime()) ? raw.getTime() : 0;
+    }
+    const d = new Date(raw);
+    return Number.isFinite(d.getTime()) ? d.getTime() : 0;
+  };
 
-  const filtered =
-    filterCat === "All"
-      ? subCats
-      : subCats.filter((s) => s.parentCategory === filterCat);
+  const catNames = [
+    "All",
+    ...Array.from(new Set(categories.map((c) => String(c.name || "").trim()).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    ),
+  ];
+
+  const filtered = useMemo(() => {
+    const rows =
+      filterCat === "All"
+        ? [...subCats]
+        : subCats.filter((s) => s.parentCategory === filterCat);
+
+    rows.sort((a, b) => {
+      if (sortBy === "name_desc") {
+        return String(b.name || "").localeCompare(String(a.name || ""), undefined, {
+          sensitivity: "base",
+        });
+      }
+      if (sortBy === "oldest") {
+        return getCreatedAtMs(a) - getCreatedAtMs(b);
+      }
+      if (sortBy === "newest") {
+        return getCreatedAtMs(b) - getCreatedAtMs(a);
+      }
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+        sensitivity: "base",
+      });
+    });
+
+    return rows;
+  }, [filterCat, sortBy, subCats]);
 
   return (
     <>
@@ -217,6 +258,21 @@ export default function SubCategoriesList() {
             {c}
           </button>
         ))}
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <MdSort style={{ color: "#64748b" }} />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            style={{ height: 36, minWidth: 190 }}
+            title="Sort sub-categories"
+          >
+            <option value="name_asc">Sort: Name (A → Z)</option>
+            <option value="name_desc">Sort: Name (Z → A)</option>
+            <option value="oldest">Sort: Oldest → Newest</option>
+            <option value="newest">Sort: Newest → Oldest</option>
+          </select>
+        </div>
       </div>
 
       <div className="card">

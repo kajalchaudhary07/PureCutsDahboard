@@ -6,12 +6,7 @@ import {
   MdShoppingCart,
   MdTrendingUp,
 } from "react-icons/md";
-import {
-  getOrders,
-  getProductReviews,
-  getProducts,
-  getUsers,
-} from "../../firestoreService";
+import { getDashboardMetrics } from "../../firestoreService";
 
 const money = (value) => {
   const amount = Number(value || 0);
@@ -30,30 +25,40 @@ const toMillis = (value) => {
 
 export default function DashboardPage() {
   const [orders, setOrders] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [reviews, setReviews] = useState([]);
+  const [snapshot, setSnapshot] = useState({
+    ordersCount: 0,
+    productsCount: 0,
+    customersCount: 0,
+    approvedReviews: 0,
+    totalRevenue: 0,
+    pendingOrders: 0,
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [ordersData, productsData, usersData, reviewsData] = await Promise.all([
-          getOrders(),
-          getProducts(),
-          getUsers(),
-          getProductReviews(),
-        ]);
-        setOrders(ordersData);
-        setProducts(productsData);
-        setCustomers(usersData);
-        setReviews(reviewsData);
+        const data = await getDashboardMetrics({ recentOrdersPageSize: 120 });
+        setOrders(data.recentOrders || []);
+        setSnapshot({
+          ordersCount: data.ordersCount || 0,
+          productsCount: data.productsCount || 0,
+          customersCount: data.customersCount || 0,
+          approvedReviews: data.approvedReviews || 0,
+          totalRevenue: data.totalRevenue || 0,
+          pendingOrders: data.pendingOrders || 0,
+        });
       } catch {
         setOrders([]);
-        setProducts([]);
-        setCustomers([]);
-        setReviews([]);
+        setSnapshot({
+          ordersCount: 0,
+          productsCount: 0,
+          customersCount: 0,
+          approvedReviews: 0,
+          totalRevenue: 0,
+          pendingOrders: 0,
+        });
       } finally {
         setLoading(false);
       }
@@ -63,30 +68,15 @@ export default function DashboardPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const revenue = orders.reduce((sum, order) => {
-      const direct = Number(order.totalAmount ?? order.total ?? order.grandTotal ?? 0);
-      if (Number.isFinite(direct) && direct > 0) return sum + direct;
-      const itemsTotal = Array.isArray(order.items)
-        ? order.items.reduce((s, item) => s + Number(item.price || 0) * Number(item.qty || 1), 0)
-        : 0;
-      return sum + (Number.isFinite(itemsTotal) ? itemsTotal : 0);
-    }, 0);
-
-    const approvedReviews = reviews.filter((review) => review.approved === true).length;
-    const pendingOrders = orders.filter((order) => {
-      const status = String(order.orderStatus || order.status || "").toLowerCase();
-      return status && status !== "delivered" && status !== "cancelled";
-    }).length;
-
     return {
-      revenue,
-      ordersCount: orders.length,
-      productsCount: products.length,
-      customersCount: customers.length,
-      approvedReviews,
-      pendingOrders,
+      revenue: snapshot.totalRevenue,
+      ordersCount: snapshot.ordersCount,
+      productsCount: snapshot.productsCount,
+      customersCount: snapshot.customersCount,
+      approvedReviews: snapshot.approvedReviews,
+      pendingOrders: snapshot.pendingOrders,
     };
-  }, [orders, products, customers, reviews]);
+  }, [snapshot]);
 
   const recentOrders = useMemo(() => {
     return [...orders]

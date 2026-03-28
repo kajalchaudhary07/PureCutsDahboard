@@ -3,10 +3,13 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  startAfter,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
@@ -30,6 +33,9 @@ const statusClass = {
   offline: "is-offline",
 };
 
+const THREADS_PAGE_SIZE = 50;
+const MESSAGES_PAGE_SIZE = 100;
+
 export default function ChatPage() {
   const { user } = useAuth();
   const [threads, setThreads] = useState([]);
@@ -41,6 +47,12 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [messages, setMessages] = useState([]);
+  const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [threadsCursor, setThreadsCursor] = useState(null);
+  const [messagesCursor, setMessagesCursor] = useState(null);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [activeSupportFlow, setActiveSupportFlow] = useState(null);
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [mediaPreviewUrl, setMediaPreviewUrl] = useState("");
@@ -178,7 +190,8 @@ export default function ChatPage() {
     setLoadingThreads(true);
     const chatsQuery = query(
       collection(db, "chats"),
-      orderBy("updatedAt", "desc")
+      orderBy("updatedAt", "desc"),
+      limit(THREADS_PAGE_SIZE)
     );
 
     const unsub = onSnapshot(
@@ -203,8 +216,15 @@ export default function ChatPage() {
             ),
             latest: String(data.lastMessage || "No messages yet"),
             lastMessageBy: String(data.lastMessageBy || "").trim(),
+            _updatedAtMs: toMillis(
+              data.updatedAt || data.lastServerTimestamp || data.lastTimestamp
+            ),
           };
         });
+
+        const liveCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+        setThreadsCursor(liveCursor);
+        setHasMoreThreads(snap.docs.length === THREADS_PAGE_SIZE);
 
         if (hasLoadedThreadsRef.current) {
           nextThreads.forEach((thread) => {
@@ -227,7 +247,17 @@ export default function ChatPage() {
         );
         hasLoadedThreadsRef.current = true;
 
-        setThreads(nextThreads);
+        setThreads((prev) => {
+          const map = new Map();
+          prev.forEach((thread) => map.set(thread.id, thread));
+          nextThreads.forEach((thread) => map.set(thread.id, thread));
+
+          return Array.from(map.values()).sort((a, b) => {
+            const diff = Number(b._updatedAtMs || 0) - Number(a._updatedAtMs || 0);
+            if (diff !== 0) return diff;
+            return String(a.id).localeCompare(String(b.id));
+          });
+        });
         setLoadingThreads(false);
         setError("");
 
@@ -261,6 +291,61 @@ export default function ChatPage() {
   const activeThread =
     threads.find((thread) => thread.id === selectedId) || filteredThreads[0] || null;
 
+  const loadMoreThreads = async () => {
+    if (!threadsCursor || loadingMoreThreads || !hasMoreThreads) return;
+    setLoadingMoreThreads(true);
+    try {
+      const olderThreadsQuery = query(
+        collection(db, "chats"),
+        orderBy("updatedAt", "desc"),
+        startAfter(threadsCursor),
+        limit(THREADS_PAGE_SIZE)
+      );
+      const snap = await getDocs(olderThreadsQuery);
+      const extra = snap.docs.map((d) => {
+        const data = d.data() || {};
+        const userName = String(data.userName || data.customerName || "Customer").trim();
+        const userEmail = String(data.userEmail || "").trim();
+        const status = toMillis(data.lastTimestamp) > 0 ? "online" : "offline";
+
+        return {
+          id: d.id,
+          chatId: d.id,
+          customer: userName || "Customer",
+          email: userEmail,
+          avatar: avatarFrom(userName, userEmail),
+          status,
+          unread: Number(data.unreadForAdmin || 0),
+          lastSeen: formatThreadTime(
+            data.lastServerTimestamp || data.lastTimestamp || data.updatedAt
+          ),
+          latest: String(data.lastMessage || "No messages yet"),
+          lastMessageBy: String(data.lastMessageBy || "").trim(),
+          _updatedAtMs: toMillis(
+            data.updatedAt || data.lastServerTimestamp || data.lastTimestamp
+          ),
+        };
+      });
+
+      setThreads((prev) => {
+        const map = new Map(prev.map((thread) => [thread.id, thread]));
+        extra.forEach((thread) => map.set(thread.id, thread));
+        return Array.from(map.values()).sort((a, b) => {
+          const diff = Number(b._updatedAtMs || 0) - Number(a._updatedAtMs || 0);
+          if (diff !== 0) return diff;
+          return String(a.id).localeCompare(String(b.id));
+        });
+      });
+
+      setThreadsCursor(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : threadsCursor);
+      setHasMoreThreads(snap.docs.length === THREADS_PAGE_SIZE);
+    } catch (err) {
+      setError(err?.message || "Could not load more conversations.");
+    } finally {
+      setLoadingMoreThreads(false);
+    }
+  };
+
   useEffect(() => {
     if (!activeThread?.chatId) {
       setMessages([]);
@@ -270,7 +355,8 @@ export default function ChatPage() {
     setLoadingMessages(true);
     const messagesQuery = query(
       collection(db, "chats", activeThread.chatId, "messages"),
-      orderBy("timestamp", "asc")
+      orderBy("timestamp", "desc"),
+      limit(MESSAGES_PAGE_SIZE)
     );
 
     const unsub = onSnapshot(
@@ -311,6 +397,10 @@ export default function ChatPage() {
           if (a._sortMs === b._sortMs) return a.id.localeCompare(b.id);
           return a._sortMs - b._sortMs;
         });
+
+        const liveCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+        setMessagesCursor(liveCursor);
+        setHasOlderMessages(snap.docs.length === MESSAGES_PAGE_SIZE);
 
         if (hasLoadedCurrentChat) {
           snap.docChanges().forEach((change) => {
@@ -383,6 +473,7 @@ export default function ChatPage() {
   }, [activeThread?.chatId]);
 
   useEffect(() => {
+    if (loadingOlderMessages) return;
     scrollMessagesToBottom(false);
   }, [messages]);
 
@@ -394,6 +485,70 @@ export default function ChatPage() {
     setError("");
     setLoadingThreads(true);
     setTimeout(() => setLoadingThreads(false), 250);
+  };
+
+  const loadOlderMessages = async () => {
+    if (!activeThread?.chatId || !messagesCursor || loadingOlderMessages || !hasOlderMessages) {
+      return;
+    }
+
+    setLoadingOlderMessages(true);
+    setError("");
+    try {
+      const olderMessagesQuery = query(
+        collection(db, "chats", activeThread.chatId, "messages"),
+        orderBy("timestamp", "desc"),
+        startAfter(messagesCursor),
+        limit(MESSAGES_PAGE_SIZE)
+      );
+
+      const snap = await getDocs(olderMessagesQuery);
+      const olderRows = snap.docs.map((d) => {
+        const data = d.data() || {};
+        const resolvedTime = resolveMessageTime(data);
+        const senderRole = String(data.senderRole || "").toLowerCase();
+        const senderId = String(data.senderId || "").trim();
+        const from = senderRole === "admin" || senderId === user?.uid
+          ? "admin"
+          : senderRole === "bot"
+            ? "bot"
+            : "customer";
+
+        return {
+          id: d.id,
+          from,
+          senderRole,
+          senderId,
+          seen: data.seen === true,
+          text: String(data.text || data.message || "").trim(),
+          mediaUrl: String(data.mediaUrl || data.image || data.video || "").trim(),
+          mediaType: resolveMediaType(data),
+          fileName: String(data.fileName || "").trim(),
+          options: Array.isArray(data.options)
+            ? data.options.map((item) => String(item || "").trim()).filter(Boolean)
+            : [],
+          time: formatTime(resolvedTime),
+          _sortMs: toMillis(resolvedTime),
+          _raw: data,
+        };
+      });
+
+      setMessages((prev) => {
+        const map = new Map(prev.map((message) => [message.id, message]));
+        olderRows.forEach((message) => map.set(message.id, message));
+        return Array.from(map.values()).sort((a, b) => {
+          if (a._sortMs === b._sortMs) return a.id.localeCompare(b.id);
+          return a._sortMs - b._sortMs;
+        });
+      });
+
+      setMessagesCursor(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : messagesCursor);
+      setHasOlderMessages(snap.docs.length === MESSAGES_PAGE_SIZE);
+    } catch (err) {
+      setError(err?.message || "Could not load older messages.");
+    } finally {
+      setLoadingOlderMessages(false);
+    }
   };
 
   const sendMessage = async () => {
@@ -586,6 +741,25 @@ export default function ChatPage() {
                 );
               })
             )}
+
+            {!loadingThreads && filteredThreads.length > 0 ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: "10px 8px 12px" }}>
+                {hasMoreThreads ? (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={loadingMoreThreads}
+                    onClick={loadMoreThreads}
+                  >
+                    {loadingMoreThreads ? "Loading..." : "Load more chats"}
+                  </button>
+                ) : (
+                  <span className="text-muted" style={{ fontSize: 12 }}>
+                    End of conversations list
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
         </aside>
 
@@ -628,6 +802,25 @@ export default function ChatPage() {
               </div>
 
               <div className="chat-message-list" ref={messageListRef}>
+                {!loadingMessages && messages.length > 0 ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: "8px 8px 4px" }}>
+                    {hasOlderMessages ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        disabled={loadingOlderMessages}
+                        onClick={loadOlderMessages}
+                      >
+                        {loadingOlderMessages ? "Loading..." : "Load earlier messages"}
+                      </button>
+                    ) : (
+                      <span className="text-muted" style={{ fontSize: 12 }}>
+                        Start of conversation
+                      </span>
+                    )}
+                  </div>
+                ) : null}
+
                 {loadingMessages ? (
                   <div className="empty-state">Loading messages…</div>
                 ) : messages.length === 0 ? (

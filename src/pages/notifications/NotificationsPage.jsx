@@ -12,7 +12,7 @@ import {
   createBroadcastNotification,
   createOrderNotification,
   deleteNotification,
-  getNotifications,
+  getNotificationsPaginated,
   getOrders,
   getUsers,
   updateOrder,
@@ -113,6 +113,9 @@ export default function NotificationsPage() {
   const [users, setUsers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMoreNotifications, setLoadingMoreNotifications] = useState(false);
+  const [notificationCursor, setNotificationCursor] = useState(null);
+  const [hasMoreNotifications, setHasMoreNotifications] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState("");
   const [search, setSearch] = useState("");
@@ -131,18 +134,43 @@ export default function NotificationsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [orderData, notificationData, usersData] = await Promise.all([
+      const [orderData, usersData] = await Promise.all([
         getOrders(),
-        getNotifications(),
         getUsers(),
       ]);
+
+      const notificationsPage = await getNotificationsPaginated({
+        pageSize: 30,
+      });
+
       setOrders(orderData);
-      setNotifications(notificationData);
+      setNotifications(notificationsPage.rows);
+      setNotificationCursor(notificationsPage.nextCursor);
+      setHasMoreNotifications(notificationsPage.hasMore);
       setUsers(usersData);
     } catch {
       toast.error("Failed to load notifications data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreNotifications = async () => {
+    if (!notificationCursor || loadingMoreNotifications || !hasMoreNotifications) return;
+    setLoadingMoreNotifications(true);
+    try {
+      const notificationsPage = await getNotificationsPaginated({
+        pageSize: 30,
+        cursor: notificationCursor,
+      });
+
+      setNotifications((prev) => [...prev, ...notificationsPage.rows]);
+      setNotificationCursor(notificationsPage.nextCursor);
+      setHasMoreNotifications(notificationsPage.hasMore);
+    } catch {
+      toast.error("Failed to load more notifications");
+    } finally {
+      setLoadingMoreNotifications(false);
     }
   };
 
@@ -311,7 +339,7 @@ export default function NotificationsPage() {
       }
 
       toast.success("Notification sent successfully");
-      load();
+      await load();
     } catch (error) {
       const messageText =
         error?.message || error?.code || "Failed to send notification";
@@ -565,6 +593,25 @@ export default function NotificationsPage() {
           </div>
         )}
       </div>
+
+      {!loading && filteredNotifications.length > 0 ? (
+        <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+          {hasMoreNotifications ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={loadingMoreNotifications}
+              onClick={loadMoreNotifications}
+            >
+              {loadingMoreNotifications ? "Loading..." : "Load more notifications"}
+            </button>
+          ) : (
+            <span className="text-muted" style={{ fontSize: 12 }}>
+              End of notifications list
+            </span>
+          )}
+        </div>
+      ) : null}
     </>
   );
 }

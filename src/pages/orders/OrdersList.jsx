@@ -7,7 +7,7 @@ import {
   MdSearch,
 } from "react-icons/md";
 import ConfirmDialog from "../../components/ConfirmDialog";
-import { deleteOrder, getOrders, updateOrder } from "../../firestoreService";
+import { deleteOrder, getOrdersPaginated, updateOrder } from "../../firestoreService";
 
 const ORDER_STATUS_OPTIONS = [
   "placed",
@@ -326,19 +326,37 @@ tbody tr:last-child td{border-bottom:none}
 export default function OrdersList() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [statusSavingId, setStatusSavingId] = useState("");
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ append = false } = {}) => {
+    if (append) {
+      if (!hasMore || loadingMore) return;
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+
     try {
-      const data = await getOrders();
-      setOrders(data);
+      const page = await getOrdersPaginated({
+        pageSize: 25,
+        cursor: append ? nextCursor : null,
+      });
+      setOrders((prev) => (append ? [...prev, ...page.rows] : page.rows));
+      setNextCursor(page.nextCursor);
+      setHasMore(page.hasMore);
     } catch {
       toast.error("Failed to load orders");
     } finally {
-      setLoading(false);
+      if (append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -366,7 +384,7 @@ export default function OrdersList() {
       await deleteOrder(deleteTarget.id);
       toast.success("Order deleted");
       setDeleteTarget(null);
-      load();
+      load({ append: false });
     } catch {
       toast.error("Failed to delete order");
     }
@@ -531,6 +549,24 @@ export default function OrdersList() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!loading && filtered.length > 0 && (
+          <div style={{ padding: "0 16px 16px", display: "flex", justifyContent: "center" }}>
+            {hasMore ? (
+              <button
+                className="btn btn-outline"
+                disabled={loadingMore}
+                onClick={() => load({ append: true })}
+              >
+                {loadingMore ? "Loading..." : "Load more orders"}
+              </button>
+            ) : (
+              <span className="text-muted" style={{ fontSize: 12 }}>
+                You’ve reached the end of loaded orders.
+              </span>
+            )}
           </div>
         )}
       </div>

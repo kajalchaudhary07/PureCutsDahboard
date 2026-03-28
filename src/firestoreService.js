@@ -3,21 +3,34 @@ import {
   collectionGroup,
   getDocs,
   getDoc,
+  getCountFromServer,
   addDoc,
   setDoc,
   writeBatch,
   updateDoc,
   deleteDoc,
   doc,
+  documentId,
   serverTimestamp,
   query,
   orderBy,
+  startAfter,
+  limit,
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "./firebaseConfig";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
+
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+
+const clampPageSize = (value, fallback = DEFAULT_PAGE_SIZE) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor(parsed)));
+};
 
 export const getAll = async (col) => {
   const snap = await getDocs(collection(db, col));
@@ -44,6 +57,58 @@ export const deleteItem = async (col, id) => {
 
 // ─── Products ──────────────────────────────────────────────────────────────────
 export const getProducts = () => getAll("products");
+export const getProductsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    const allRows = await getProducts();
+    const offset = Number(cursor.__fallbackOffset || 0);
+    const rows = allRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor: nextOffset < allRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < allRows.length,
+    };
+  }
+
+  let builtQuery = query(
+    collection(db, "products"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "products"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  try {
+    const snap = await getDocs(builtQuery);
+    return {
+      rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    const allRows = await getProducts();
+    const offset = Number(cursor?.__fallbackOffset || 0);
+    const rows = allRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor: nextOffset < allRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < allRows.length,
+    };
+  }
+};
 export const addProduct = (data) => addItem("products", data);
 export const updateProduct = (id, data) => updateItem("products", id, data);
 export const deleteProduct = (id) => deleteItem("products", id);
@@ -387,6 +452,98 @@ export const getProductReviews = async () => {
   return deduped;
 };
 
+export const getProductReviewsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+  status = "all",
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+  const normalizedStatus = String(status || "all").trim().toLowerCase();
+  const includeStatusFilter =
+    normalizedStatus === "approved" || normalizedStatus === "pending";
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    const allRows = await getProductReviews();
+    const filteredRows = includeStatusFilter
+      ? allRows.filter((row) => String(row.status || "").toLowerCase() === normalizedStatus)
+      : allRows;
+    const offset = Number(cursor.__fallbackOffset || 0);
+    const rows = filteredRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor: nextOffset < filteredRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < filteredRows.length,
+    };
+  }
+
+  const base = collectionGroup(db, "reviews");
+
+  const buildQuery = (nextCursor = null) => {
+    const constraints = [];
+    if (includeStatusFilter) {
+      constraints.push(where("status", "==", normalizedStatus));
+    }
+    constraints.push(orderBy("createdAt", "desc"));
+    if (nextCursor) constraints.push(startAfter(nextCursor));
+    constraints.push(limit(pageLimit));
+    return query(base, ...constraints);
+  };
+
+  try {
+    const snap = await getDocs(buildQuery(cursor));
+    const rows = snap.docs.map((d) => {
+      const parentProductRef = d.ref.parent.parent;
+      return normalizeReview({
+        id: d.id,
+        __col: "products_reviews",
+        __path: d.ref.path,
+        productId: parentProductRef?.id || "",
+        userId: d.id,
+        ...d.data(),
+      });
+    });
+    return {
+      rows,
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    try {
+      const fallbackBase = collection(db, "productReviews");
+      const constraints = [];
+      if (includeStatusFilter) {
+        constraints.push(where("status", "==", normalizedStatus));
+      }
+      constraints.push(orderBy("createdAt", "desc"));
+      if (cursor) constraints.push(startAfter(cursor));
+      constraints.push(limit(pageLimit));
+      const snap = await getDocs(query(fallbackBase, ...constraints));
+      const rows = snap.docs.map((d) =>
+        normalizeReview({ id: d.id, __col: "productReviews", ...d.data() })
+      );
+      return {
+        rows,
+        nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+        hasMore: snap.docs.length === pageLimit,
+      };
+    } catch {
+      const allRows = await getProductReviews();
+      const filteredRows = includeStatusFilter
+        ? allRows.filter((row) => String(row.status || "").toLowerCase() === normalizedStatus)
+        : allRows;
+      const offset = Number(cursor?.__fallbackOffset || 0);
+      const rows = filteredRows.slice(offset, offset + pageLimit);
+      const nextOffset = offset + rows.length;
+      return {
+        rows,
+        nextCursor: nextOffset < filteredRows.length ? { __fallbackOffset: nextOffset } : null,
+        hasMore: nextOffset < filteredRows.length,
+      };
+    }
+  }
+};
+
 export const addProductReview = async (data) => {
   const normalized = {
     ...data,
@@ -672,6 +829,35 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
   });
 };
 
+export const getOrdersPaginated = async ({ pageSize = DEFAULT_PAGE_SIZE, cursor = null } = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+  let builtQuery = query(
+    collection(db, "orders"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "orders"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  const snap = await getDocs(builtQuery);
+  const rawOrders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const rows = await hydrateOrdersWithCustomerProfile(rawOrders);
+  const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+
+  return {
+    rows,
+    nextCursor,
+    hasMore: snap.docs.length === pageLimit,
+  };
+};
+
 export const getOrders = async () => {
   try {
     const snap = await getDocs(
@@ -918,6 +1104,47 @@ export const getNotifications = async () => {
   }
 };
 
+export const getNotificationsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+  let builtQuery = query(
+    collection(db, "notifications"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "notifications"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  try {
+    const snap = await getDocs(builtQuery);
+    const rows = snap.docs.map((d) => normalizeNotification({ id: d.id, ...d.data() }));
+    return {
+      rows,
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    const allRows = await getNotifications();
+    const offset = Number(cursor?.__fallbackOffset || 0);
+    const rows = allRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor: nextOffset < allRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < allRows.length,
+    };
+  }
+};
+
 export const deleteNotification = async (id) => {
   const notificationId = String(id || "").trim();
   if (!notificationId) {
@@ -985,7 +1212,36 @@ export const getUsers = async () => {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
+export const getUsersPaginated = async ({ pageSize = DEFAULT_PAGE_SIZE, cursor = null } = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+  let builtQuery = query(
+    collection(db, "users"),
+    orderBy(documentId()),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "users"),
+      orderBy(documentId()),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  const snap = await getDocs(builtQuery);
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const nextCursor = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+
+  return {
+    rows,
+    nextCursor,
+    hasMore: snap.docs.length === pageLimit,
+  };
+};
+
 export const updateUser = (id, data) => updateItem("users", id, data);
+export const deleteUser = (id) => deleteItem("users", id);
 
 // ─── Customers (Users with Orders) ─────────────────────────────────────────────
 
@@ -1006,6 +1262,40 @@ const resolveOrderUserId = (order = {}) => {
     if (value) return value;
   }
   return "";
+};
+
+const orderCountCache = new Map();
+
+const getOrderCountByField = async (field, userId) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return 0;
+
+  try {
+    const snap = await getCountFromServer(
+      query(collection(db, "orders"), where(field, "==", uid))
+    );
+    return Number(snap?.data()?.count || 0);
+  } catch {
+    return 0;
+  }
+};
+
+const getUserOrderCount = async (userId) => {
+  const uid = String(userId || "").trim();
+  if (!uid) return 0;
+  if (orderCountCache.has(uid)) return orderCountCache.get(uid);
+
+  const fieldsByPriority = ["userId", "uid", "customerId", "userUid"];
+  for (const field of fieldsByPriority) {
+    const count = await getOrderCountByField(field, uid);
+    if (count > 0) {
+      orderCountCache.set(uid, count);
+      return count;
+    }
+  }
+
+  orderCountCache.set(uid, 0);
+  return 0;
 };
 
 /**
@@ -1051,6 +1341,208 @@ export const getUsersWithOrderCounts = async () => {
     }));
 
   return customersWithOrders;
+};
+
+const legacyGetUsersWithOrderCountsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+  overscanFactor = 3,
+} = {}) => {
+  const targetSize = clampPageSize(pageSize);
+  const overscanSize = clampPageSize(targetSize * Math.max(1, Number(overscanFactor) || 1), targetSize);
+  const customers = [];
+  let currentCursor = cursor;
+  let hasMoreUsers = true;
+  let loops = 0;
+
+  while (customers.length < targetSize && hasMoreUsers && loops < 10) {
+    loops += 1;
+    const page = await getUsersPaginated({
+      pageSize: overscanSize,
+      cursor: currentCursor,
+    });
+
+    hasMoreUsers = Boolean(page.hasMore);
+    currentCursor = page.nextCursor;
+
+    if (!page.rows.length) break;
+
+    const withCounts = await Promise.all(
+      page.rows.map(async (user) => {
+        const userKey = user.id || user.uid;
+        if (!userKey) return null;
+        const ordersCount = await getUserOrderCount(userKey);
+        if (ordersCount <= 0) return null;
+        return {
+          ...user,
+          ordersCount,
+        };
+      })
+    );
+
+    customers.push(...withCounts.filter(Boolean));
+    if (!hasMoreUsers) break;
+  }
+
+  return {
+    rows: customers.slice(0, targetSize),
+    nextCursor: hasMoreUsers ? currentCursor : null,
+    hasMore: hasMoreUsers,
+  };
+};
+
+export const getUsersWithOrderCountsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+  overscanFactor = 3,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    return legacyGetUsersWithOrderCountsPaginated({
+      pageSize,
+      cursor,
+      overscanFactor,
+    });
+  }
+
+  try {
+    let builtQuery = query(
+      collection(db, "users"),
+      where("ordersCount", ">", 0),
+      orderBy("ordersCount", "desc"),
+      limit(pageLimit)
+    );
+
+    if (cursor) {
+      builtQuery = query(
+        collection(db, "users"),
+        where("ordersCount", ">", 0),
+        orderBy("ordersCount", "desc"),
+        startAfter(cursor),
+        limit(pageLimit)
+      );
+    }
+
+    const snap = await getDocs(builtQuery);
+    const rows = snap.docs.map((d) => {
+      const data = d.data() || {};
+      return {
+        id: d.id,
+        ...data,
+        ordersCount: Number(data.ordersCount || 0),
+      };
+    });
+
+    if (!cursor && rows.length === 0) {
+      const ordersTotal = await getSafeCount(collection(db, "orders"));
+      if (ordersTotal > 0) {
+        return legacyGetUsersWithOrderCountsPaginated({
+          pageSize,
+          cursor,
+          overscanFactor,
+        });
+      }
+    }
+
+    return {
+      rows,
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    return legacyGetUsersWithOrderCountsPaginated({
+      pageSize,
+      cursor,
+      overscanFactor,
+    });
+  }
+};
+
+const getSafeCount = async (ref) => {
+  try {
+    const snap = await getCountFromServer(ref);
+    return Number(snap?.data()?.count || 0);
+  } catch {
+    return 0;
+  }
+};
+
+const getApprovedReviewsCount = async () => {
+  const subCollectionApproved = await getSafeCount(
+    query(collectionGroup(db, "reviews"), where("approved", "==", true))
+  );
+  if (subCollectionApproved > 0) return subCollectionApproved;
+
+  return await getSafeCount(
+    query(collection(db, "productReviews"), where("approved", "==", true))
+  );
+};
+
+export const getDashboardMetrics = async ({ recentOrdersPageSize = 80 } = {}) => {
+  let snapshot = null;
+  try {
+    const call = httpsCallable(functions, "getDashboardMetricsSnapshot");
+    const response = await call({});
+    snapshot = response?.data || null;
+  } catch {
+    snapshot = null;
+  }
+
+  const [fallbackProductsCount, fallbackCustomersCount, fallbackApprovedReviews] = await Promise.all([
+    getSafeCount(collection(db, "products")),
+    getSafeCount(collection(db, "users")),
+    getApprovedReviewsCount(),
+  ]);
+
+  let fallbackOrdersCount = Number(snapshot?.ordersCount || 0);
+  let fallbackTotalRevenue = Number(snapshot?.totalRevenue || 0);
+  let fallbackPendingOrders = Number(snapshot?.pendingOrders || 0);
+  let recentOrders = [];
+
+  if (snapshot) {
+    const page = await getOrdersPaginated({
+      pageSize: clampPageSize(recentOrdersPageSize, 80),
+    });
+    recentOrders = page.rows;
+  } else {
+    const allOrders = await getOrders();
+    fallbackOrdersCount = allOrders.length;
+    fallbackTotalRevenue = allOrders.reduce((sum, order) => {
+      const amount = Number(
+        order.totalAmount ?? order.total ?? order.grandTotal ?? order.amount ?? 0
+      );
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+    fallbackPendingOrders = allOrders.filter((order) => {
+      const status = String(order.orderStatus || order.status || "").toLowerCase();
+      return status && status !== "delivered" && status !== "cancelled";
+    }).length;
+    recentOrders = allOrders.slice(0, clampPageSize(recentOrdersPageSize, 80));
+  }
+
+  return {
+    ordersCount: fallbackOrdersCount,
+    productsCount: fallbackProductsCount,
+    customersCount: fallbackCustomersCount,
+    approvedReviews: fallbackApprovedReviews,
+    totalRevenue: fallbackTotalRevenue,
+    pendingOrders: fallbackPendingOrders,
+    recentOrders,
+    source: snapshot?.source || "firestore_count_fallback",
+  };
+};
+
+export const rebuildOrderCounters = async () => {
+  const call = httpsCallable(functions, "rebuildOrderCounters");
+  const response = await call({});
+  return response?.data || null;
+};
+
+export const getDashboardMetricsSnapshotMeta = async () => {
+  const call = httpsCallable(functions, "getDashboardMetricsSnapshot");
+  const response = await call({});
+  return response?.data || null;
 };
 
 export const createBroadcastNotification = async ({
