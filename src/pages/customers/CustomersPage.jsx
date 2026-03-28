@@ -97,6 +97,26 @@ export default function CustomersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const onFocus = () => {
+      loadCustomers({ append: false });
+    };
+
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadCustomers({ append: false });
+      }
+    }, 20000);
+
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return users;

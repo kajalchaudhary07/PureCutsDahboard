@@ -1243,6 +1243,139 @@ export const getUsersPaginated = async ({ pageSize = DEFAULT_PAGE_SIZE, cursor =
 export const updateUser = (id, data) => updateItem("users", id, data);
 export const deleteUser = (id) => deleteItem("users", id);
 
+// ─── Verification Requests (New Users Approvals) ─────────────────────────────
+
+const resolveVerificationRequestUserId = (request = {}) => {
+  const candidates = [
+    request.userId,
+    request.uid,
+    request.customerId,
+    request.user && (request.user.id || request.user.uid),
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+
+  return "";
+};
+
+export const getVerificationRequestsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    const snap = await getDocs(collection(db, "verificationRequests"));
+    const allRows = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+    const offset = Number(cursor.__fallbackOffset || 0);
+    const rows = allRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor:
+        nextOffset < allRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < allRows.length,
+    };
+  }
+
+  let builtQuery = query(
+    collection(db, "verificationRequests"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "verificationRequests"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  try {
+    const snap = await getDocs(builtQuery);
+    return {
+      rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    const snap = await getDocs(collection(db, "verificationRequests"));
+    const allRows = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+    const offset = Number(cursor?.__fallbackOffset || 0);
+    const rows = allRows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + rows.length;
+    return {
+      rows,
+      nextCursor:
+        nextOffset < allRows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < allRows.length,
+    };
+  }
+};
+
+export const setVerificationRequestStatus = async (
+  requestId,
+  { status, reviewedBy = "", note = "" } = {}
+) => {
+  const id = String(requestId || "").trim();
+  const nextStatus = String(status || "").trim().toLowerCase();
+
+  if (!id) throw new Error("requestId is required");
+  if (!["pending", "approved", "rejected"].includes(nextStatus)) {
+    throw new Error("Invalid status");
+  }
+
+  const requestRef = doc(db, "verificationRequests", id);
+  const requestSnap = await getDoc(requestRef);
+  if (!requestSnap.exists()) {
+    throw new Error("Verification request not found");
+  }
+
+  const requestData = requestSnap.data() || {};
+  const userId = resolveVerificationRequestUserId(requestData);
+
+  const batch = writeBatch(db);
+  const now = serverTimestamp();
+
+  batch.update(requestRef, {
+    status: nextStatus,
+    approved: nextStatus === "approved",
+    rejected: nextStatus === "rejected",
+    reviewedBy: String(reviewedBy || "").trim(),
+    reviewNote: String(note || "").trim(),
+    reviewedAt: now,
+    updatedAt: now,
+  });
+
+  if (userId) {
+    const userRef = doc(db, "users", userId);
+    batch.set(
+      userRef,
+      {
+        verificationStatus: nextStatus,
+        accessApproved: nextStatus === "approved",
+        isVerified: nextStatus === "approved",
+        verifiedAt: nextStatus === "approved" ? now : null,
+        rejectedAt: nextStatus === "rejected" ? now : null,
+        verificationUpdatedAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  }
+
+  await batch.commit();
+};
+
 // ─── Customers (Users with Orders) ─────────────────────────────────────────────
 
 const resolveOrderUserId = (order = {}) => {
@@ -1348,6 +1481,10 @@ const legacyGetUsersWithOrderCountsPaginated = async ({
   cursor = null,
   overscanFactor = 3,
 } = {}) => {
+  if (!cursor) {
+    orderCountCache.clear();
+  }
+
   const targetSize = clampPageSize(pageSize);
   const overscanSize = clampPageSize(targetSize * Math.max(1, Number(overscanFactor) || 1), targetSize);
   const customers = [];
@@ -1396,67 +1533,11 @@ export const getUsersWithOrderCountsPaginated = async ({
   cursor = null,
   overscanFactor = 3,
 } = {}) => {
-  const pageLimit = clampPageSize(pageSize);
-
-  if (cursor?.__fallbackOffset !== undefined) {
-    return legacyGetUsersWithOrderCountsPaginated({
-      pageSize,
-      cursor,
-      overscanFactor,
-    });
-  }
-
-  try {
-    let builtQuery = query(
-      collection(db, "users"),
-      where("ordersCount", ">", 0),
-      orderBy("ordersCount", "desc"),
-      limit(pageLimit)
-    );
-
-    if (cursor) {
-      builtQuery = query(
-        collection(db, "users"),
-        where("ordersCount", ">", 0),
-        orderBy("ordersCount", "desc"),
-        startAfter(cursor),
-        limit(pageLimit)
-      );
-    }
-
-    const snap = await getDocs(builtQuery);
-    const rows = snap.docs.map((d) => {
-      const data = d.data() || {};
-      return {
-        id: d.id,
-        ...data,
-        ordersCount: Number(data.ordersCount || 0),
-      };
-    });
-
-    if (!cursor && rows.length === 0) {
-      const ordersTotal = await getSafeCount(collection(db, "orders"));
-      if (ordersTotal > 0) {
-        return legacyGetUsersWithOrderCountsPaginated({
-          pageSize,
-          cursor,
-          overscanFactor,
-        });
-      }
-    }
-
-    return {
-      rows,
-      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
-      hasMore: snap.docs.length === pageLimit,
-    };
-  } catch {
-    return legacyGetUsersWithOrderCountsPaginated({
-      pageSize,
-      cursor,
-      overscanFactor,
-    });
-  }
+  return legacyGetUsersWithOrderCountsPaginated({
+    pageSize,
+    cursor,
+    overscanFactor,
+  });
 };
 
 const getSafeCount = async (ref) => {

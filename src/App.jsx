@@ -23,6 +23,7 @@ import DashboardPage from "./pages/dashboard/DashboardPage";
 import MediaPage from "./pages/media/MediaPage";
 import UnitsPage from "./pages/units/UnitsPage";
 import CustomersPage from "./pages/customers/CustomersPage";
+import NewUsersPage from "./pages/new-users/NewUsersPage";
 import BannersPage from "./pages/banners/BannersPage";
 import CouponsPage from "./pages/coupons/CouponsPage";
 import ProfilePage from "./pages/profile/ProfilePage";
@@ -55,6 +56,7 @@ export default function App() {
               <Route path="attributes/edit/:id" element={<CreateAttribute />} />
               <Route path="units" element={<UnitsPage />} />
               <Route path="customers" element={<CustomersPage />} />
+              <Route path="new-users" element={<NewUsersPage />} />
               <Route path="orders" element={<OrdersList />} />
               <Route path="order-details" element={<OrderDetailsPage />} />
               <Route path="order-details/:id" element={<OrderDetailsPage />} />
