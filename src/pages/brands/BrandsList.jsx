@@ -7,6 +7,7 @@ import {
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
 const emptyForm = { name: "", image: "" };
 
@@ -51,6 +52,17 @@ export default function BrandsList() {
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
   };
+
+  useClipboardFilePaste({
+    enabled: showModal,
+    onFiles: (files) => {
+      const file = files?.[0];
+      if (!file) return;
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      toast.success("Logo pasted from clipboard");
+    },
+  });
 
   const uploadImage = async () => {
     if (!imageFile) return form.image || "";
@@ -127,6 +139,7 @@ export default function BrandsList() {
                       <MdBrandingWatermark style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                     )}
                     <div className="img-upload-label"><span>Upload logo</span></div>
+                    <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image</div>
                   </div>
                   <input
                     placeholder="Or paste image URL…"

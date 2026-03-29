@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { MdCloudUpload, MdDelete, MdImage } from "react-icons/md";
+import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
 const MEDIA_TYPES = ["None", "Banners", "Brands", "Categories", "Products", "Personalized"];
 
@@ -7,9 +8,8 @@ export default function MediaPage() {
   const [files, setFiles] = useState([]);
   const [selectedType, setSelectedType] = useState("None");
 
-  const onPick = (event) => {
-    const selected = Array.from(event.target.files || []);
-    if (!selected.length) return;
+  const appendPickedFiles = (selected) => {
+    if (!selected?.length) return;
 
     const mapped = selected.map((file) => ({
       id: `${file.name}-${Date.now()}-${Math.random()}`,
@@ -20,8 +20,23 @@ export default function MediaPage() {
     }));
 
     setFiles((prev) => [...mapped, ...prev]);
+  };
+
+  const onPick = (event) => {
+    const selected = Array.from(event.target.files || []);
+    if (!selected.length) return;
+
+    appendPickedFiles(selected);
     event.target.value = "";
   };
+
+  useClipboardFilePaste({
+    enabled: true,
+    maxFiles: Number.POSITIVE_INFINITY,
+    onFiles: (pastedFiles) => {
+      appendPickedFiles(pastedFiles);
+    },
+  });
 
   const visibleFiles =
     selectedType === "None"
@@ -67,6 +82,7 @@ export default function MediaPage() {
             Drop images here or click to select files
             {selectedType !== "None" ? ` for ${selectedType}` : ""}
           </p>
+          <small className="media-upload-hint">Tip: Press Ctrl+V to paste copied image(s)</small>
           <input type="file" accept="image/*" multiple onChange={onPick} />
         </label>
       </section>

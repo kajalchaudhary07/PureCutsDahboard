@@ -9,6 +9,7 @@ import {
   getBanners,
   toggleBannerStatus,
 } from "../../firestoreService";
+import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
 const friendlyError = (e, fallback) => {
   const code = String(e?.code || "").toLowerCase();
@@ -88,6 +89,25 @@ export default function BannersPage() {
     setMediaUrl("");
     setMediaPreview(URL.createObjectURL(picked));
   };
+
+  useClipboardFilePaste({
+    enabled: true,
+    allowVideo: true,
+    onFiles: (files) => {
+      const picked = files?.[0];
+      if (!picked) return;
+
+      if (mediaPreview?.startsWith("blob:")) {
+        URL.revokeObjectURL(mediaPreview);
+      }
+
+      setMediaFile(picked);
+      setMediaType(picked.type.startsWith("video/") ? "video" : "image");
+      setMediaUrl("");
+      setMediaPreview(URL.createObjectURL(picked));
+      toast.success("Banner media pasted from clipboard");
+    },
+  });
 
   const uploadBannerMedia = async () => {
     if (!mediaFile) return mediaUrl.trim();
@@ -217,6 +237,7 @@ export default function BannersPage() {
                   <MdImage style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                 )}
                 <div className="img-upload-label"><span>Choose file from device</span></div>
+                <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image or video</div>
               </div>
               <input
                 value={!mediaFile ? mediaUrl : ""}

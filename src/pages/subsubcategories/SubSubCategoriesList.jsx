@@ -19,6 +19,7 @@ import {
 } from "../../firestoreService";
 import { storage } from "../../firebaseConfig";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
 const emptyForm = {
   name: "",
@@ -105,6 +106,17 @@ export default function SubSubCategoriesList() {
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
   };
+
+  useClipboardFilePaste({
+    enabled: showModal,
+    onFiles: (files) => {
+      const file = files?.[0];
+      if (!file) return;
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      toast.success("Sub-sub-category image pasted from clipboard");
+    },
+  });
 
   const uploadImage = async () => {
     if (!imageFile) return form.image || "";
@@ -311,6 +323,7 @@ export default function SubSubCategoriesList() {
                       <MdCategory style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                     )}
                     <div className="img-upload-label"><span>Upload icon</span></div>
+                    <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image</div>
                   </div>
                   <input
                     placeholder="Or paste image URL…"

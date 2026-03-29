@@ -8,6 +8,7 @@ import {
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { storage } from "../../firebaseConfig";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
 const emptyForm = { name: "", parentCategory: "", image: "" };
 
@@ -61,6 +62,17 @@ export default function SubCategoriesList() {
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
   };
+
+  useClipboardFilePaste({
+    enabled: showModal,
+    onFiles: (files) => {
+      const file = files?.[0];
+      if (!file) return;
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      toast.success("Sub-category image pasted from clipboard");
+    },
+  });
 
   const uploadImage = async () => {
     if (!imageFile) return form.image || "";
@@ -192,6 +204,7 @@ export default function SubCategoriesList() {
                       <MdAccountTree style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                     )}
                     <div className="img-upload-label"><span>Upload icon</span></div>
+                    <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image</div>
                   </div>
                   <input
                     placeholder="Or paste image URL…"

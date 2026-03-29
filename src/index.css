@@ -534,6 +534,11 @@ input:checked + .slider::before { transform: translateX(18px); }
   color: var(--text-secondary);
 }
 .img-upload-label span { color: var(--primary); font-weight: 500; cursor: pointer; }
+.img-upload-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
 
 /* ─── Tag filter row ──────────────── */
 .filter-row {
@@ -1988,6 +1993,11 @@ input:checked + .slider::before { transform: translateX(18px); }
 
 .media-upload-box input {
   display: none;
+}
+
+.media-upload-hint {
+  font-size: 12px;
+  color: #334155;
 }
 
 .media-grid {
