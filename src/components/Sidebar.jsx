@@ -1,5 +1,8 @@
-import { NavLink } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { collection, collectionGroup, onSnapshot } from "firebase/firestore";
 import { useAuth } from "../auth/AuthProvider";
+import { db } from "../firebaseConfig";
 import {
   MdDashboard,
   MdPermMedia,
@@ -123,7 +126,47 @@ const PATH_RESOURCE_MAP = {
   "/image-guide": "Media",
 };
 
-function NavItem({ item }) {
+const normalizeStatus = (value) => String(value || "").trim().toLowerCase();
+
+const isPendingVerificationRequest = (request = {}) => {
+  const status = normalizeStatus(request.status);
+  if (status) return status === "pending";
+  if (request.approved === true || request.rejected === true) return false;
+  return true;
+};
+
+const isPendingReview = (review = {}) => {
+  const status = normalizeStatus(review.status);
+  if (status) return status !== "approved";
+  if (review.approved === true) return false;
+  return true;
+};
+
+const isNewOrder = (order = {}) => {
+  const status = normalizeStatus(order.orderStatus || order.status);
+  if (!status) return true;
+  return status === "placed" || status === "pending";
+};
+
+const formatBadge = (count) => {
+  const safe = Number(count || 0);
+  if (safe <= 0) return "";
+  if (safe > 99) return "99+";
+  return String(safe);
+};
+
+const badgeKeyForPathname = (pathname = "") => {
+  const path = String(pathname || "").toLowerCase();
+  if (path.startsWith("/new-users")) return "newUsers";
+  if (path.startsWith("/orders") || path.startsWith("/order-details")) {
+    return "orders";
+  }
+  if (path.startsWith("/product-reviews")) return "reviews";
+  if (path.startsWith("/chat")) return "chats";
+  return "";
+};
+
+function NavItem({ item, badgeText }) {
   return (
     <NavLink
       to={item.path}
@@ -131,13 +174,27 @@ function NavItem({ item }) {
       className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
     >
       {item.icon}
-      {item.label}
+      <span className="nav-item-label">{item.label}</span>
+      {badgeText ? <span className="nav-alert-badge">{badgeText}</span> : null}
     </NavLink>
   );
 }
 
 export default function Sidebar() {
   const { hasPermission, isSuperAdmin } = useAuth();
+  const location = useLocation();
+  const [badgeCounts, setBadgeCounts] = useState({
+    newUsers: 0,
+    orders: 0,
+    reviews: 0,
+    chats: 0,
+  });
+  const [seenBadgeCounts, setSeenBadgeCounts] = useState({
+    newUsers: 0,
+    orders: 0,
+    reviews: 0,
+    chats: 0,
+  });
 
   const canView = (item) => {
     if (isSuperAdmin) return true;
@@ -152,6 +209,135 @@ export default function Sidebar() {
       items: group.items.filter(canView),
     }))
     .filter((group) => group.items.length > 0);
+
+  useEffect(() => {
+    const unsubscribers = [];
+
+    const unsubRequests = onSnapshot(
+      collection(db, "verificationRequests"),
+      (snap) => {
+        const pending = snap.docs.reduce((sum, docSnap) => {
+          return sum + (isPendingVerificationRequest(docSnap.data() || {}) ? 1 : 0);
+        }, 0);
+        setBadgeCounts((prev) => ({ ...prev, newUsers: pending }));
+      },
+      () => {
+        setBadgeCounts((prev) => ({ ...prev, newUsers: 0 }));
+      }
+    );
+    unsubscribers.push(unsubRequests);
+
+    const unsubOrders = onSnapshot(
+      collection(db, "orders"),
+      (snap) => {
+        const pending = snap.docs.reduce((sum, docSnap) => {
+          return sum + (isNewOrder(docSnap.data() || {}) ? 1 : 0);
+        }, 0);
+        setBadgeCounts((prev) => ({ ...prev, orders: pending }));
+      },
+      () => {
+        setBadgeCounts((prev) => ({ ...prev, orders: 0 }));
+      }
+    );
+    unsubscribers.push(unsubOrders);
+
+    const pendingReviewsByKey = new Map();
+    const syncReviewsBadge = () => {
+      let total = 0;
+      pendingReviewsByKey.forEach((value) => {
+        total += Number(value || 0);
+      });
+      setBadgeCounts((prev) => ({ ...prev, reviews: total }));
+    };
+
+    const unsubTopLevelReviews = onSnapshot(
+      collection(db, "productReviews"),
+      (snap) => {
+        const pending = snap.docs.reduce((sum, docSnap) => {
+          return sum + (isPendingReview(docSnap.data() || {}) ? 1 : 0);
+        }, 0);
+        pendingReviewsByKey.set("productReviews", pending);
+        syncReviewsBadge();
+      },
+      () => {
+        pendingReviewsByKey.set("productReviews", 0);
+        syncReviewsBadge();
+      }
+    );
+    unsubscribers.push(unsubTopLevelReviews);
+
+    const unsubNestedReviews = onSnapshot(
+      collectionGroup(db, "reviews"),
+      (snap) => {
+        const pending = snap.docs.reduce((sum, docSnap) => {
+          return sum + (isPendingReview(docSnap.data() || {}) ? 1 : 0);
+        }, 0);
+        pendingReviewsByKey.set("nestedReviews", pending);
+        syncReviewsBadge();
+      },
+      () => {
+        pendingReviewsByKey.set("nestedReviews", 0);
+        syncReviewsBadge();
+      }
+    );
+    unsubscribers.push(unsubNestedReviews);
+
+    const unsubChats = onSnapshot(
+      collection(db, "chats"),
+      (snap) => {
+        const unread = snap.docs.reduce((sum, docSnap) => {
+          const value = Number(docSnap.data()?.unreadForAdmin || 0);
+          return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        setBadgeCounts((prev) => ({ ...prev, chats: unread }));
+      },
+      () => {
+        setBadgeCounts((prev) => ({ ...prev, chats: 0 }));
+      }
+    );
+    unsubscribers.push(unsubChats);
+
+    return () => {
+      unsubscribers.forEach((unsub) => {
+        if (typeof unsub === "function") unsub();
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    const key = badgeKeyForPathname(location.pathname);
+    if (!key) return;
+
+    setSeenBadgeCounts((prev) => {
+      const currentSeen = Number(prev[key] || 0);
+      const currentCount = Number(badgeCounts[key] || 0);
+      if (currentSeen >= currentCount) return prev;
+      return {
+        ...prev,
+        [key]: currentCount,
+      };
+    });
+  }, [location.pathname, badgeCounts]);
+
+  const unreadBadgeCounts = useMemo(
+    () => ({
+      newUsers: Math.max(0, Number(badgeCounts.newUsers || 0) - Number(seenBadgeCounts.newUsers || 0)),
+      orders: Math.max(0, Number(badgeCounts.orders || 0) - Number(seenBadgeCounts.orders || 0)),
+      reviews: Math.max(0, Number(badgeCounts.reviews || 0) - Number(seenBadgeCounts.reviews || 0)),
+      chats: Math.max(0, Number(badgeCounts.chats || 0) - Number(seenBadgeCounts.chats || 0)),
+    }),
+    [badgeCounts, seenBadgeCounts]
+  );
+
+  const badgeByPath = useMemo(
+    () => ({
+      "/new-users": formatBadge(unreadBadgeCounts.newUsers),
+      "/orders": formatBadge(unreadBadgeCounts.orders),
+      "/product-reviews": formatBadge(unreadBadgeCounts.reviews),
+      "/chat": formatBadge(unreadBadgeCounts.chats),
+    }),
+    [unreadBadgeCounts]
+  );
 
   return (
     <aside className="sidebar">
@@ -168,7 +354,11 @@ export default function Sidebar() {
             {group.dividerBefore && <div className="nav-divider" />}
             <div className="nav-group-title">{group.group}</div>
             {group.items.map((item) => (
-              <NavItem key={item.label} item={item} />
+              <NavItem
+                key={item.label}
+                item={item}
+                badgeText={badgeByPath[item.path] || ""}
+              />
             ))}
           </div>
         ))}
