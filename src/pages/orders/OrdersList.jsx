@@ -7,7 +7,12 @@ import {
   MdSearch,
 } from "react-icons/md";
 import ConfirmDialog from "../../components/ConfirmDialog";
-import { deleteOrder, getOrdersPaginated, updateOrder } from "../../firestoreService";
+import {
+  createOrderNotification,
+  deleteOrder,
+  getOrdersPaginated,
+  updateOrder,
+} from "../../firestoreService";
 
 const ORDER_STATUS_OPTIONS = [
   "placed",
@@ -40,6 +45,29 @@ const formatCurrency = (value) => {
 
 const normalizeStatus = (status, fallback = "pending") =>
   String(status || fallback).trim().toLowerCase();
+
+const getCancellationActor = (order = {}) => {
+  const status = normalizeStatus(order.orderStatus || order.status, "placed");
+  if (status !== "cancelled") return "";
+
+  const cancelledBy = String(order.cancelledBy || order.canceledBy || "")
+    .trim()
+    .toLowerCase();
+  const source = String(order.cancellationSource || order.cancelSource || "")
+    .trim()
+    .toLowerCase();
+
+  const userBy = ["user", "customer", "app_user"];
+  const adminBy = ["admin", "dashboard", "staff", "superadmin"];
+
+  if (userBy.some((token) => cancelledBy.includes(token))) return "User";
+  if (adminBy.some((token) => cancelledBy.includes(token))) return "Admin";
+
+  if (userBy.some((token) => source.includes(token))) return "User";
+  if (adminBy.some((token) => source.includes(token))) return "Admin";
+
+  return "Unknown";
+};
 
 const getOrderRef = (order) => {
   const raw = order.orderId || order.code || order.number || order.id || "order";
@@ -105,6 +133,72 @@ const getItemsCount = (order) => {
   if (typeof order.itemCount === "number") return order.itemCount;
   if (typeof order.totalItems === "number") return order.totalItems;
   return 0;
+};
+
+const getOrderProductLabel = (order = {}) => {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const names = items
+    .map((item) =>
+      String(
+        item?.productName || item?.name || item?.title || item?.product?.name || ""
+      ).trim()
+    )
+    .filter(Boolean);
+
+  if (names.length === 0) return "your order";
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1} more item${names.length - 1 > 1 ? "s" : ""}`;
+};
+
+const getOrderStatusNotificationTemplate = (status, order = {}) => {
+  const productLabel = getOrderProductLabel(order);
+
+  if (status === "confirmed") {
+    return {
+      title: `Order Confirmed: ${productLabel}`,
+      message: `Your order for ${productLabel} is confirmed and being prepared.`,
+    };
+  }
+
+  if (status === "processing") {
+    return {
+      title: `Order Processing: ${productLabel}`,
+      message: `Your order for ${productLabel} is currently being processed.`,
+    };
+  }
+
+  if (status === "packed") {
+    return {
+      title: `Order Packed: ${productLabel}`,
+      message: `Your order for ${productLabel} has been packed and will be dispatched soon.`,
+    };
+  }
+
+  if (status === "dispatched") {
+    return {
+      title: `Order Dispatched: ${productLabel}`,
+      message: `Your order for ${productLabel} has been dispatched.`,
+    };
+  }
+
+  if (status === "delivered") {
+    return {
+      title: `Order Delivered: ${productLabel}`,
+      message: `Your order for ${productLabel} has been delivered. Thank you for shopping with PureCuts.`,
+    };
+  }
+
+  if (status === "cancelled") {
+    return {
+      title: `Order Cancelled: ${productLabel}`,
+      message: `Your order for ${productLabel} has been cancelled. If this looks incorrect, please contact support.`,
+    };
+  }
+
+  return {
+    title: `Order Update: ${productLabel}`,
+    message: `Your order for ${productLabel} has been updated to ${String(status || "updated")}.`,
+  };
 };
 
 const getAmount = (order) =>
@@ -392,15 +486,56 @@ export default function OrdersList() {
 
   const onChangeOrderStatus = async (order, nextStatus) => {
     const previous = order.orderStatus || order.status || "placed";
+    const normalizedNextStatus = normalizeStatus(nextStatus, "placed");
+    const isCancelling = normalizedNextStatus === "cancelled";
+    const nextPatch = isCancelling
+      ? {
+          orderStatus: nextStatus,
+          status: nextStatus,
+          cancelledBy: "admin",
+          cancellationSource: "dashboard_admin",
+          cancellationReason: "Cancelled by admin from dashboard",
+          cancelledAt: order.cancelledAt || new Date(),
+        }
+      : {
+          orderStatus: nextStatus,
+          status: nextStatus,
+        };
 
     setOrders((prev) =>
-      prev.map((o) => (o.id === order.id ? { ...o, orderStatus: nextStatus, status: nextStatus } : o))
+      prev.map((o) => (o.id === order.id ? { ...o, ...nextPatch } : o))
     );
     setStatusSavingId(order.id);
 
     try {
-      await updateOrder(order.id, { orderStatus: nextStatus, status: nextStatus });
-      toast.success("Order status updated");
+      await updateOrder(order.id, nextPatch);
+      const tpl = getOrderStatusNotificationTemplate(nextStatus, {
+        ...order,
+        ...nextPatch,
+      });
+
+      try {
+        await createOrderNotification({
+          order: {
+            ...order,
+            id: order.id,
+            orderStatus: nextStatus,
+            status: nextStatus,
+          },
+          status: nextStatus,
+          title: tpl.title,
+          message: tpl.message,
+          sendApp: true,
+          sendSms: false,
+          sendWhatsapp: false,
+          createdBy: "admin",
+        });
+        toast.success("Order status updated and customer notified");
+      } catch (notifyError) {
+        const messageText =
+          notifyError?.message || notifyError?.code || "Notification failed";
+        toast.warning(`Order status updated, but notification failed: ${messageText}`);
+      }
     } catch {
       setOrders((prev) =>
         prev.map((o) => (o.id === order.id ? { ...o, orderStatus: previous, status: previous } : o))
@@ -485,6 +620,8 @@ export default function OrdersList() {
                   const customer = getCustomer(order);
                   const orderStatus = normalizeStatus(order.orderStatus || order.status, "placed");
                   const paymentStatus = normalizeStatus(order.paymentStatus, "unpaid");
+                  const cancellationActor = getCancellationActor(order);
+                  const cancellationReason = String(order.cancellationReason || "").trim();
 
                   return (
                     <tr key={order.id}>
@@ -515,6 +652,12 @@ export default function OrdersList() {
                             </option>
                           ))}
                         </select>
+                        {orderStatus === "cancelled" ? (
+                          <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                            Cancelled by {cancellationActor}
+                            {cancellationReason ? ` • ${cancellationReason}` : ""}
+                          </div>
+                        ) : null}
                       </td>
                       <td>
                         <span className={`badge ${paymentStatus === "paid" ? "badge-green" : "badge-gray"}`}>

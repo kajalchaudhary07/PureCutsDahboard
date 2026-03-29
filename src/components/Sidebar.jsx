@@ -145,7 +145,18 @@ const isPendingReview = (review = {}) => {
 const isNewOrder = (order = {}) => {
   const status = normalizeStatus(order.orderStatus || order.status);
   if (!status) return true;
-  return status === "placed" || status === "pending";
+
+  const cancelledBy = normalizeStatus(order.cancelledBy || order.canceledBy);
+  const cancelSource = normalizeStatus(order.cancellationSource || order.cancelSource);
+  const cancelledByUser =
+    status === "cancelled" &&
+    (cancelledBy.includes("user") ||
+      cancelledBy.includes("customer") ||
+      cancelSource.includes("user") ||
+      cancelSource.includes("customer") ||
+      cancelSource.includes("app_user"));
+
+  return status === "placed" || status === "pending" || cancelledByUser;
 };
 
 const formatBadge = (count) => {
