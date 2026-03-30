@@ -41,6 +41,27 @@ export default function AdminManagement() {
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
   const avatarRef = useRef();
+  const imgUploadDivRef = useRef();
+  // Handle paste event for avatar image
+  const handleAvatarPaste = (event) => {
+    if (!event.clipboardData) return;
+    const items = event.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          if (avatarPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(avatarPreview);
+          }
+          setAvatarFile(file);
+          setAvatarPreview(URL.createObjectURL(file));
+          event.preventDefault();
+          break;
+        }
+      }
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -244,7 +265,14 @@ export default function AdminManagement() {
               <div className="form-grid single">
                 <div className="form-group">
                   <label>Admin Avatar</label>
-                  <div className="img-upload" onClick={() => avatarRef.current?.click()}>
+                  <div
+                    className="img-upload"
+                    ref={imgUploadDivRef}
+                    onClick={() => avatarRef.current?.click()}
+                    onPaste={handleAvatarPaste}
+                    tabIndex={0}
+                    title="You can also paste an image here (Ctrl+V)"
+                  >
                     <input
                       ref={avatarRef}
                       type="file"
@@ -257,7 +285,7 @@ export default function AdminManagement() {
                       <MdAdminPanelSettings style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                     )}
                     <div className="img-upload-label">
-                      <span>Upload avatar</span>
+                      <span>Upload avatar, or paste (Ctrl+V)</span>
                     </div>
                   </div>
                 </div>

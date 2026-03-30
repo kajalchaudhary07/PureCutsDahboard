@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { MdCloudUpload, MdDelete, MdImage } from "react-icons/md";
 import { useClipboardFilePaste } from "../../utils/useClipboardFilePaste";
 
@@ -7,6 +7,7 @@ const MEDIA_TYPES = ["None", "Banners", "Brands", "Categories", "Products", "Per
 export default function MediaPage() {
   const [files, setFiles] = useState([]);
   const [selectedType, setSelectedType] = useState("None");
+  const uploadBoxRef = useRef(null);
 
   const appendPickedFiles = (selected) => {
     if (!selected?.length) return;
@@ -18,7 +19,6 @@ export default function MediaPage() {
       preview: URL.createObjectURL(file),
       type: selectedType,
     }));
-
     setFiles((prev) => [...mapped, ...prev]);
   };
 
@@ -28,6 +28,22 @@ export default function MediaPage() {
 
     appendPickedFiles(selected);
     event.target.value = "";
+  };
+
+  const onPaste = (event) => {
+    if (!event.clipboardData) return;
+    const items = event.clipboardData.items;
+    const images = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        const file = items[i].getAsFile();
+        if (file) images.push(file);
+      }
+    }
+    if (images.length > 0) {
+      appendPickedFiles(images);
+      event.preventDefault();
+    }
   };
 
   useClipboardFilePaste({
@@ -76,10 +92,16 @@ export default function MediaPage() {
             </select>
           </div>
         </div>
-        <label className="media-upload-box">
+        <label
+          className="media-upload-box"
+          ref={uploadBoxRef}
+          tabIndex={0}
+          onPaste={onPaste}
+          title="You can also paste images here (Ctrl+V)"
+        >
           <MdCloudUpload />
           <p>
-            Drop images here or click to select files
+            Drop images here, click to select files, or paste (Ctrl+V)
             {selectedType !== "None" ? ` for ${selectedType}` : ""}
           </p>
           <small className="media-upload-hint">Tip: Press Ctrl+V to paste copied image(s)</small>

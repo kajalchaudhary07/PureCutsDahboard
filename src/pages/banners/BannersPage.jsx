@@ -43,6 +43,7 @@ export default function BannersPage() {
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaPreview, setMediaPreview] = useState("");
   const mediaInputRef = useRef(null);
+  const imgUploadDivRef = useRef(null);
 
   useEffect(() => {
     return () => {
@@ -71,6 +72,28 @@ export default function BannersPage() {
   }, []);
 
   const handleMediaFileChange = (event) => {
+      // Handle paste event for images/videos
+      const handlePaste = (event) => {
+        if (!event.clipboardData) return;
+        const items = event.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.kind === "file" && (item.type.startsWith("image/") || item.type.startsWith("video/"))) {
+            const file = item.getAsFile();
+            if (file) {
+              if (mediaPreview?.startsWith("blob:")) {
+                URL.revokeObjectURL(mediaPreview);
+              }
+              setMediaFile(file);
+              setMediaType(file.type.startsWith("video/") ? "video" : "image");
+              setMediaUrl("");
+              setMediaPreview(URL.createObjectURL(file));
+              event.preventDefault();
+              break;
+            }
+          }
+        }
+      };
     const picked = event.target.files?.[0];
     if (!picked) return;
 
@@ -218,7 +241,14 @@ export default function BannersPage() {
             </div>
             <div className="form-group">
               <label>Upload Media from System *</label>
-              <div className="img-upload" onClick={() => mediaInputRef.current?.click()}>
+              <div
+                className="img-upload"
+                ref={imgUploadDivRef}
+                onClick={() => mediaInputRef.current?.click()}
+                onPaste={handlePaste}
+                tabIndex={0}
+                title="You can also paste images or videos here (Ctrl+V)"
+              >
                 <input
                   ref={mediaInputRef}
                   type="file"
@@ -236,7 +266,7 @@ export default function BannersPage() {
                 ) : (
                   <MdImage style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                 )}
-                <div className="img-upload-label"><span>Choose file from device</span></div>
+                <div className="img-upload-label"><span>Choose file from device, or paste (Ctrl+V)</span></div>
                 <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image or video</div>
               </div>
               <input

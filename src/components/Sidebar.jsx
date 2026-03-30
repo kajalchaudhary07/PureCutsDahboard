@@ -107,7 +107,7 @@ const PATH_RESOURCE_MAP = {
   "/media": "Media",
   "/categories": "Category",
   "/subcategories": "Sub-Category",
-  "/subsubcategories": "Sub-Category",
+   "/subsubcategories": "Sub-Category",
   "/attributes": "Attributes",
   "/units": "Attributes",
   "/brands": "Brands",

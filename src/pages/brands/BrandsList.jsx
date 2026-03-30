@@ -22,6 +22,24 @@ export default function BrandsList() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const fileRef = useRef();
+  const imgUploadDivRef = useRef();
+  // Handle paste event for brand logo image
+  const handleImagePaste = (event) => {
+    if (!event.clipboardData) return;
+    const items = event.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          setImageFile(file);
+          setImagePreview(URL.createObjectURL(file));
+          event.preventDefault();
+          break;
+        }
+      }
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -131,14 +149,21 @@ export default function BrandsList() {
               <div className="form-grid single">
                 <div className="form-group">
                   <label>Brand Logo</label>
-                  <div className="img-upload" onClick={() => fileRef.current.click()}>
+                  <div
+                    className="img-upload"
+                    ref={imgUploadDivRef}
+                    onClick={() => fileRef.current.click()}
+                    onPaste={handleImagePaste}
+                    tabIndex={0}
+                    title="You can also paste an image here (Ctrl+V)"
+                  >
                     <input ref={fileRef} type="file" accept="image/*" onChange={handleImageChange} />
                     {imagePreview ? (
                       <img src={imagePreview} className="img-preview" alt="preview" />
                     ) : (
                       <MdBrandingWatermark style={{ fontSize: 36, color: "var(--text-secondary)" }} />
                     )}
-                    <div className="img-upload-label"><span>Upload logo</span></div>
+                    <div className="img-upload-label"><span>Upload logo, or paste (Ctrl+V)</span></div>
                     <div className="img-upload-hint">Tip: Press Ctrl+V to paste copied image</div>
                   </div>
                   <input
