@@ -1560,6 +1560,55 @@ const getApprovedReviewsCount = async () => {
   );
 };
 
+const isPendingOrderStatus = (value) => {
+  const status = String(value || "").trim().toLowerCase();
+  if (!status) return true;
+  return ![
+    "delivered",
+    "completed",
+    "cancelled",
+    "canceled",
+    "refunded",
+    "failed",
+  ].includes(status);
+};
+
+const getLiveOrderMetrics = async () => {
+  try {
+    const snap = await getDocs(collection(db, "orders"));
+    let totalRevenue = 0;
+    let pendingOrders = 0;
+    const uniqueCustomerIds = new Set();
+
+    snap.docs.forEach((docSnap) => {
+      const order = docSnap.data() || {};
+      const amount = Number(
+        order.totalAmount ?? order.total ?? order.grandTotal ?? order.amount ?? 0
+      );
+      totalRevenue += Number.isFinite(amount) ? amount : 0;
+
+      const customerId = resolveOrderUserId(order);
+      if (customerId) {
+        uniqueCustomerIds.add(customerId);
+      }
+
+      if (isPendingOrderStatus(order.orderStatus || order.status)) {
+        pendingOrders += 1;
+      }
+    });
+
+    return {
+      ordersCount: snap.size,
+      customersCount: uniqueCustomerIds.size,
+      totalRevenue,
+      pendingOrders,
+      source: "live_orders_collection",
+    };
+  } catch {
+    return null;
+  }
+};
+
 export const getDashboardMetrics = async ({ recentOrdersPageSize = 80 } = {}) => {
   let snapshot = null;
   try {
@@ -1570,13 +1619,16 @@ export const getDashboardMetrics = async ({ recentOrdersPageSize = 80 } = {}) =>
     snapshot = null;
   }
 
-  const [fallbackProductsCount, fallbackCustomersCount, fallbackApprovedReviews] = await Promise.all([
+  const [fallbackProductsCount, fallbackUsersCount, fallbackApprovedReviews] = await Promise.all([
     getSafeCount(collection(db, "products")),
     getSafeCount(collection(db, "users")),
     getApprovedReviewsCount(),
   ]);
 
+  const liveOrderMetrics = await getLiveOrderMetrics();
+
   let fallbackOrdersCount = Number(snapshot?.ordersCount || 0);
+  let fallbackCustomersCount = Number(snapshot?.customersCount || fallbackUsersCount || 0);
   let fallbackTotalRevenue = Number(snapshot?.totalRevenue || 0);
   let fallbackPendingOrders = Number(snapshot?.pendingOrders || 0);
   let recentOrders = [];
@@ -1595,11 +1647,17 @@ export const getDashboardMetrics = async ({ recentOrdersPageSize = 80 } = {}) =>
       );
       return sum + (Number.isFinite(amount) ? amount : 0);
     }, 0);
-    fallbackPendingOrders = allOrders.filter((order) => {
-      const status = String(order.orderStatus || order.status || "").toLowerCase();
-      return status && status !== "delivered" && status !== "cancelled";
-    }).length;
+    fallbackPendingOrders = allOrders.filter((order) =>
+      isPendingOrderStatus(order.orderStatus || order.status)
+    ).length;
     recentOrders = allOrders.slice(0, clampPageSize(recentOrdersPageSize, 80));
+  }
+
+  if (liveOrderMetrics) {
+    fallbackOrdersCount = Number(liveOrderMetrics.ordersCount || fallbackOrdersCount);
+    fallbackCustomersCount = Number(liveOrderMetrics.customersCount || fallbackCustomersCount);
+    fallbackTotalRevenue = Number(liveOrderMetrics.totalRevenue || fallbackTotalRevenue);
+    fallbackPendingOrders = Number(liveOrderMetrics.pendingOrders || fallbackPendingOrders);
   }
 
   return {
@@ -1610,7 +1668,7 @@ export const getDashboardMetrics = async ({ recentOrdersPageSize = 80 } = {}) =>
     totalRevenue: fallbackTotalRevenue,
     pendingOrders: fallbackPendingOrders,
     recentOrders,
-    source: snapshot?.source || "firestore_count_fallback",
+    source: liveOrderMetrics?.source || snapshot?.source || "firestore_count_fallback",
   };
 };
 
