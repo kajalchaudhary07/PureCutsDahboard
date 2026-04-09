@@ -93,6 +93,9 @@ const getRating = (review) => {
   return Math.max(0, Math.min(5, value));
 };
 
+const getReviewRowKey = (review) =>
+  `${review.__col || "productReviews"}:${review.id || review.__path || "unknown"}`;
+
 function RatingStars({ rating }) {
   const rounded = Math.round(rating);
   return (
@@ -119,7 +122,20 @@ export default function ProductReviews() {
   const [mediaFile, setMediaFile] = useState(null);
   const [mediaPreview, setMediaPreview] = useState("");
   const [selected, setSelected] = useState(() => new Set());
+  const [expandedReviews, setExpandedReviews] = useState(() => new Set());
   const mediaInputRef = useRef(null);
+
+  const toggleReviewExpanded = (rowKey) => {
+    setExpandedReviews((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) {
+        next.delete(rowKey);
+      } else {
+        next.add(rowKey);
+      }
+      return next;
+    });
+  };
 
   const load = async ({ append = false } = {}) => {
     if (append) {
@@ -356,15 +372,19 @@ export default function ProductReviews() {
               </thead>
               <tbody>
                 {filtered.map((review) => {
+                  const rowKey = getReviewRowKey(review);
                   const status = normalizeStatus(review);
                   const isApproved = status === "approved";
                   const image = getReviewImage(review);
                   const rating = getRating(review);
                   const userName = getReviewerName(review);
+                  const reviewText = getReviewText(review) || "-";
+                  const canExpand = reviewText !== "-";
+                  const isExpanded = expandedReviews.has(rowKey);
                   const initials = (userName || "U").trim().charAt(0).toUpperCase();
 
                   return (
-                    <tr key={`${review.__col || "productReviews"}-${review.id}`}>
+                    <tr key={rowKey}>
                       <td>
                         <input
                           type="checkbox"
@@ -411,7 +431,18 @@ export default function ProductReviews() {
                         </div>
                       </td>
                       <td>
-                        <div className="review-linkish">{getReviewText(review) || "-"}</div>
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            className={`review-linkish review-linkish-btn ${isExpanded ? "expanded" : ""}`.trim()}
+                            onClick={() => toggleReviewExpanded(rowKey)}
+                            title={isExpanded ? "Click to collapse review" : "Click to read full review"}
+                          >
+                            {reviewText}
+                          </button>
+                        ) : (
+                          <div className="review-linkish">{reviewText}</div>
+                        )}
                       </td>
                       <td>
                         <div className="review-rating-cell">
