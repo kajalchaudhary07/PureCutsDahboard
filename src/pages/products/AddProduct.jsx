@@ -55,6 +55,10 @@ const empty = {
   manageStock: true,
   onSale: false,
   salePrice: "",
+  pricingType: "",
+  pricingTiers: [],
+  variableTierMode: "manual",
+  variableUniversalTiers: [],
   variableOptions: "",
 };
 
@@ -85,6 +89,7 @@ export default function AddProduct() {
   const [existingVariantIds, setExistingVariantIds] = useState([]);
   const [variantUploadProgress, setVariantUploadProgress] = useState({});
   const [variantDeleteProgress, setVariantDeleteProgress] = useState({});
+  const [tierErrors, setTierErrors] = useState([]);
   const fileRef = useRef();
   const additionalRef = useRef();
   const descriptionMediaRef = useRef();
@@ -180,6 +185,22 @@ export default function AddProduct() {
             showInRecommendedSalon: Boolean(found.showInRecommendedSalon || found.isRecommended || hasLegacy(["recommended_salon", "recommended"])),
             showInMostBought: Boolean(found.showInMostBought || hasLegacy(["most_bought", "most_bought_products", "bestseller"])),
             showInPopularProducts: Boolean(found.showInPopularProducts || found.isPopular || hasLegacy(["popular_products", "popular"])),
+            pricingType: (found.pricingType || "").toString().trim(),
+            pricingTiers: Array.isArray(found.pricingTiers)
+              ? found.pricingTiers.map((tier) => ({
+                  minQty: tier?.minQty ?? "",
+                  maxQty: tier?.maxQty ?? "",
+                  price: tier?.price ?? "",
+                }))
+              : [],
+            variableTierMode: (found.variableTierMode || "").toString().trim() || "manual",
+            variableUniversalTiers: Array.isArray(found.variableUniversalTiers)
+              ? found.variableUniversalTiers.map((tier) => ({
+                  minQty: tier?.minQty ?? "",
+                  maxQty: tier?.maxQty ?? "",
+                  percentOff: tier?.percentOff ?? "",
+                }))
+              : [],
           });
           if (found.image || found.imageUrl) setImagePreview(found.image || found.imageUrl);
 
@@ -196,6 +217,14 @@ export default function AddProduct() {
               stock: (v.stock ?? "").toString(),
               colorCode: (v.colorCode || "").toString(),
               image: (v.image || "").toString(),
+              pricingType: (v.pricingType || "").toString().trim(),
+              pricingTiers: Array.isArray(v.pricingTiers)
+                ? v.pricingTiers.map((tier) => ({
+                    minQty: tier?.minQty ?? "",
+                    maxQty: tier?.maxQty ?? "",
+                    price: tier?.price ?? "",
+                  }))
+                : [],
             }));
             setVariantRows(mapped);
             setExistingVariantIds(mapped.map((v) => v.variantDocId).filter(Boolean));
@@ -682,6 +711,8 @@ export default function AddProduct() {
         stock: form.stock || "",
         colorCode: "",
         image: "",
+        pricingType: "",
+        pricingTiers: [],
       };
     });
   };
@@ -690,6 +721,267 @@ export default function AddProduct() {
     setVariantRows((rows) => rows.map((row) => (
       row.variantKey === variantKey ? { ...row, [field]: value } : row
     )));
+  };
+
+  const normalizePricingTiers = (rawTiers = []) => {
+    const parsed = (Array.isArray(rawTiers) ? rawTiers : [])
+      .map((tier) => ({
+        minQty: Number(tier?.minQty),
+        maxQty:
+          tier?.maxQty === "" || tier?.maxQty === null || tier?.maxQty === undefined
+            ? null
+            : Number(tier?.maxQty),
+        price: Number(tier?.price),
+      }))
+      .filter((tier) => Number.isFinite(tier.minQty) && Number.isFinite(tier.price))
+      .filter((tier) => tier.minQty >= 1 && tier.price >= 0);
+
+    const byQty = new Map();
+    for (const tier of parsed) {
+      const prev = byQty.get(tier.minQty);
+      if (!prev || tier.price < prev.price) {
+        byQty.set(tier.minQty, tier);
+      }
+    }
+
+    const sorted = [...byQty.values()].sort((a, b) => a.minQty - b.minQty);
+
+    return sorted.map((tier, idx) => {
+      const next = idx + 1 < sorted.length ? sorted[idx + 1] : null;
+      const inferredMax = next ? next.minQty - 1 : null;
+      let maxQty = tier.maxQty;
+
+      if (maxQty !== null && !Number.isFinite(maxQty)) {
+        maxQty = null;
+      }
+      if (maxQty !== null && maxQty < tier.minQty) {
+        maxQty = tier.minQty;
+      }
+      if (maxQty !== null && inferredMax !== null && maxQty > inferredMax) {
+        maxQty = inferredMax;
+      }
+      if (maxQty === null && inferredMax !== null) {
+        maxQty = inferredMax;
+      }
+
+      return {
+        minQty: tier.minQty,
+        maxQty,
+        price: tier.price,
+      };
+    });
+  };
+
+  const normalizePercentageTiers = (rawTiers = []) => {
+    const parsed = (Array.isArray(rawTiers) ? rawTiers : [])
+      .map((tier) => ({
+        minQty: Number(tier?.minQty),
+        maxQty:
+          tier?.maxQty === "" || tier?.maxQty === null || tier?.maxQty === undefined
+            ? null
+            : Number(tier?.maxQty),
+        percentOff: Number(tier?.percentOff),
+      }))
+      .filter((tier) => Number.isFinite(tier.minQty) && Number.isFinite(tier.percentOff))
+      .filter((tier) => tier.minQty >= 1 && tier.percentOff >= 0);
+
+    const byQty = new Map();
+    for (const tier of parsed) {
+      const safePercent = Math.min(100, tier.percentOff);
+      const prev = byQty.get(tier.minQty);
+      if (!prev || safePercent > prev.percentOff) {
+        byQty.set(tier.minQty, { ...tier, percentOff: safePercent });
+      }
+    }
+
+    const sorted = [...byQty.values()].sort((a, b) => a.minQty - b.minQty);
+    return sorted.map((tier, idx) => {
+      const next = idx + 1 < sorted.length ? sorted[idx + 1] : null;
+      const inferredMax = next ? next.minQty - 1 : null;
+      let maxQty = tier.maxQty;
+
+      if (maxQty !== null && !Number.isFinite(maxQty)) {
+        maxQty = null;
+      }
+      if (maxQty !== null && maxQty < tier.minQty) {
+        maxQty = tier.minQty;
+      }
+      if (maxQty !== null && inferredMax !== null && maxQty > inferredMax) {
+        maxQty = inferredMax;
+      }
+      if (maxQty === null && inferredMax !== null) {
+        maxQty = inferredMax;
+      }
+
+      return {
+        minQty: tier.minQty,
+        maxQty,
+        percentOff: tier.percentOff,
+      };
+    });
+  };
+
+  const addPricingTier = () => {
+    setTierErrors([]);
+    set("pricingType", "tier");
+    set("pricingTiers", [...(form.pricingTiers || []), { minQty: "", maxQty: "", price: "" }]);
+  };
+
+  const updatePricingTier = (index, field, value) => {
+    const next = [...(form.pricingTiers || [])];
+    next[index] = { ...next[index], [field]: value };
+    setTierErrors([]);
+    set("pricingTiers", next);
+  };
+
+  const removePricingTier = (index) => {
+    const next = [...(form.pricingTiers || [])];
+    next.splice(index, 1);
+    setTierErrors([]);
+    set("pricingTiers", next);
+    if (next.length === 0) set("pricingType", "");
+  };
+
+  const addUniversalTier = () => {
+    setTierErrors([]);
+    set("variableUniversalTiers", [...(form.variableUniversalTiers || []), { minQty: "", maxQty: "", percentOff: "" }]);
+  };
+
+  const updateUniversalTier = (index, field, value) => {
+    const next = [...(form.variableUniversalTiers || [])];
+    next[index] = { ...next[index], [field]: value };
+    setTierErrors([]);
+    set("variableUniversalTiers", next);
+  };
+
+  const removeUniversalTier = (index) => {
+    const next = [...(form.variableUniversalTiers || [])];
+    next.splice(index, 1);
+    setTierErrors([]);
+    set("variableUniversalTiers", next);
+  };
+
+  const addVariantPricingTier = (variantKey) => {
+    setTierErrors([]);
+    setVariantRows((rows) => rows.map((row) => (
+      row.variantKey === variantKey
+        ? {
+            ...row,
+            pricingType: "tier",
+            pricingTiers: [...(row.pricingTiers || []), { minQty: "", maxQty: "", price: "" }],
+          }
+        : row
+    )));
+  };
+
+  const addVariantPricingTierToAll = () => {
+    if (!Array.isArray(variantRows) || variantRows.length === 0) {
+      toast.warning("No variants available to add tiers.");
+      return;
+    }
+
+    setTierErrors([]);
+    setVariantRows((rows) => rows.map((row) => ({
+      ...row,
+      pricingType: "tier",
+      pricingTiers: [...(row.pricingTiers || []), { minQty: "", maxQty: "", price: "" }],
+    })));
+    toast.success("Added one tier row to all variants.");
+  };
+
+  const updateVariantPricingTier = (variantKey, index, field, value) => {
+    setTierErrors([]);
+    setVariantRows((rows) => rows.map((row) => {
+      if (row.variantKey !== variantKey) return row;
+      const next = [...(row.pricingTiers || [])];
+      next[index] = { ...next[index], [field]: value };
+      return { ...row, pricingTiers: next };
+    }));
+  };
+
+  const removeVariantPricingTier = (variantKey, index) => {
+    setTierErrors([]);
+    setVariantRows((rows) => rows.map((row) => {
+      if (row.variantKey !== variantKey) return row;
+      const next = [...(row.pricingTiers || [])];
+      next.splice(index, 1);
+      return { ...row, pricingType: next.length > 0 ? "tier" : "", pricingTiers: next };
+    }));
+  };
+
+  const collectAbsoluteTierErrors = ({ rows, basePrice, labelPrefix }) => {
+    const localErrors = [];
+    const normalized = normalizePricingTiers(rows);
+    if (rows.length > 0 && normalized.length === 0) {
+      localErrors.push(`${labelPrefix}: add valid tier rows.`);
+      return localErrors;
+    }
+
+    if (normalized.length > 0 && !normalized.some((tier) => tier.minQty === 1)) {
+      localErrors.push(`${labelPrefix}: first range must start at qty 1.`);
+    }
+
+    for (const tier of normalized) {
+      if (basePrice > 0 && tier.price > basePrice) {
+        localErrors.push(`${labelPrefix}: tier price ₹${tier.price} cannot exceed base price ₹${basePrice}.`);
+        break;
+      }
+    }
+
+    return localErrors;
+  };
+
+  const collectUniversalTierErrors = (rows) => {
+    const localErrors = [];
+    const normalized = normalizePercentageTiers(rows);
+    if (rows.length > 0 && normalized.length === 0) {
+      localErrors.push("Universal tiers: add valid rows.");
+      return localErrors;
+    }
+    if (normalized.length > 0 && !normalized.some((tier) => tier.minQty === 1)) {
+      localErrors.push("Universal tiers: first range must start at qty 1.");
+    }
+    return localErrors;
+  };
+
+  const validatePricingTiers = () => {
+    setTierErrors([]);
+    const localErrors = [];
+
+    if (form.productType === "single") {
+      localErrors.push(
+        ...collectAbsoluteTierErrors({
+          rows: form.pricingTiers || [],
+          basePrice: Number(form.price) || 0,
+          labelPrefix: "Product tiers",
+        })
+      );
+    } else {
+      const mode = (form.variableTierMode || "manual").toString().toLowerCase();
+      if (mode === "universal") {
+        localErrors.push(...collectUniversalTierErrors(form.variableUniversalTiers || []));
+      } else {
+        for (const row of variantRows) {
+          const rows = row.pricingTiers || [];
+          if (!rows.length) continue;
+          localErrors.push(
+            ...collectAbsoluteTierErrors({
+              rows,
+              basePrice: Number(row.price) || 0,
+              labelPrefix: `${row.value || row.variantKey} tiers`,
+            })
+          );
+        }
+      }
+    }
+
+    if (localErrors.length > 0) {
+      setTierErrors(localErrors);
+      toast.error(localErrors[0]);
+      return false;
+    }
+
+    return true;
   };
 
   const validateVariants = () => {
@@ -727,6 +1019,7 @@ export default function AddProduct() {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Product name is required"); return; }
     if (!form.price)        { toast.error("Price is required"); return; }
+    if (!validatePricingTiers()) return;
     if (!validateVariants()) return;
 
     setSaving(true);
@@ -775,8 +1068,19 @@ export default function AddProduct() {
             stock: Number(row.stock) || 0,
             colorCode: row.colorCode || "",
             image: row.image || "",
+            pricingType: normalizePricingTiers(row.pricingTiers || []).length > 0 ? "tier" : "",
+            pricingTiers: normalizePricingTiers(row.pricingTiers || []),
           }))
         : [];
+      const normalizedPricingTiers = normalizePricingTiers(form.pricingTiers || []);
+      const variableTierMode =
+        form.productType === "variable"
+          ? ((form.variableTierMode || "manual").toString().toLowerCase() === "universal" ? "universal" : "manual")
+          : "";
+      const normalizedUniversalTiers =
+        form.productType === "variable" && variableTierMode === "universal"
+          ? normalizePercentageTiers(form.variableUniversalTiers || [])
+          : [];
       const data = {
         ...form,
         shortDescription: mergedHighlights,
@@ -816,6 +1120,10 @@ export default function AddProduct() {
         showInPopularProducts: Boolean(form.showInPopularProducts),
         isRecommended: Boolean(form.showInRecommendedSalon),
         isPopular: Boolean(form.showInPopularProducts),
+        pricingType: form.productType === "single" && normalizedPricingTiers.length > 0 ? "tier" : "",
+        pricingTiers: form.productType === "single" ? normalizedPricingTiers : [],
+        variableTierMode,
+        variableUniversalTiers: normalizedUniversalTiers,
         homeSection: homeSections[0] || form.homeSection || "",
         homeSections,
         variants: inlineVariants,
@@ -845,6 +1153,8 @@ export default function AddProduct() {
               stock: Number(row.stock) || 0,
               colorCode: row.colorCode || "",
               image: row.image || "",
+              pricingType: normalizePricingTiers(row.pricingTiers || []).length > 0 ? "tier" : "",
+              pricingTiers: normalizePricingTiers(row.pricingTiers || []),
             };
             const created = await createVariant(productId, payload);
             keptDocIds.add(created.id);
@@ -1026,6 +1336,219 @@ export default function AddProduct() {
               <input className="pe-input" placeholder="Regular Price" type="number" min="0" value={form.originalPrice} onChange={(e) => set("originalPrice", e.target.value)} />
               <input className="pe-input" placeholder="Sale Price" type="number" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} disabled={!form.onSale} />
             </div>
+
+            {form.productType === "single" ? (
+              <div className="pe-variable-box" style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <label style={{ fontWeight: 700, fontSize: 14 }}>Quantity Based Pricing Tiers</label>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={addPricingTier}>
+                    <MdAdd /> Add Tier
+                  </button>
+                </div>
+
+                {(form.pricingTiers || []).length === 0 ? (
+                  <p className="text-muted" style={{ margin: 0 }}>
+                    No tiers configured. Product will use base price only.
+                  </p>
+                ) : (
+                  <div className="table-wrap pe-variant-table-wrap" style={{ marginBottom: 10 }}>
+                    <table className="pe-variant-table">
+                      <thead>
+                        <tr>
+                          <th>Min Qty</th>
+                          <th>Max Qty</th>
+                          <th>Price</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(form.pricingTiers || []).map((tier, idx) => (
+                          <tr key={`tier_${idx}`}>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="1"
+                                value={tier.minQty}
+                                onChange={(e) => updatePricingTier(idx, "minQty", e.target.value)}
+                                placeholder="1"
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="1"
+                                value={tier.maxQty ?? ""}
+                                onChange={(e) => updatePricingTier(idx, "maxQty", e.target.value)}
+                                placeholder={(idx === (form.pricingTiers || []).length - 1) ? "optional" : "3"}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="pe-input"
+                                type="number"
+                                min="0"
+                                value={tier.price}
+                                onChange={(e) => updatePricingTier(idx, "price", e.target.value)}
+                                placeholder="0"
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm pe-variant-delete-btn"
+                                onClick={() => removePricingTier(idx)}
+                              >
+                                <MdDeleteOutline /> Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 10 }}>
+                  <p style={{ margin: "0 0 6px", fontWeight: 700, fontSize: 12 }}>Pricing Preview</p>
+                  {normalizePricingTiers(form.pricingTiers || []).length === 0 ? (
+                    <p className="text-muted" style={{ margin: 0 }}>Buy 1+ → ₹{Number(form.price) || 0}</p>
+                  ) : (
+                    normalizePricingTiers(form.pricingTiers || []).map((tier, idx, list) => (
+                      <p key={`tier_preview_${idx}`} style={{ margin: "2px 0", fontSize: 12 }}>
+                        Buy {tier.minQty}{Number.isFinite(tier.maxQty) ? `-${tier.maxQty}` : '+'} → ₹{tier.price}
+                        {idx === list.length - 1 ? " (Best Value 🔥)" : ""}
+                      </p>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="pe-variable-box" style={{ marginTop: 12 }}>
+                <div className="pe-inline-group" style={{ marginBottom: 10 }}>
+                  <strong>Variable Tier Mode</strong>
+                  <label className="pe-radio">
+                    <input
+                      type="radio"
+                      name="variable-tier-mode"
+                      checked={(form.variableTierMode || "manual") === "manual"}
+                      onChange={() => {
+                        setTierErrors([]);
+                        set("variableTierMode", "manual");
+                      }}
+                    />
+                    Manual per variant
+                  </label>
+                  <label className="pe-radio">
+                    <input
+                      type="radio"
+                      name="variable-tier-mode"
+                      checked={(form.variableTierMode || "manual") === "universal"}
+                      onChange={() => {
+                        setTierErrors([]);
+                        set("variableTierMode", "universal");
+                      }}
+                    />
+                    Universal % tiers
+                  </label>
+                </div>
+
+                {(form.variableTierMode || "manual") === "universal" ? (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <label style={{ fontWeight: 700, fontSize: 14 }}>Universal Discount Tiers (Percentage)</label>
+                      <button type="button" className="btn btn-outline btn-sm" onClick={addUniversalTier}>
+                        <MdAdd /> Add Tier
+                      </button>
+                    </div>
+
+                    {(form.variableUniversalTiers || []).length === 0 ? (
+                      <p className="text-muted" style={{ margin: 0 }}>No universal tiers configured.</p>
+                    ) : (
+                      <div className="table-wrap pe-variant-table-wrap" style={{ marginBottom: 10 }}>
+                        <table className="pe-variant-table">
+                          <thead>
+                            <tr>
+                              <th>Min Qty</th>
+                              <th>Max Qty</th>
+                              <th>Discount %</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(form.variableUniversalTiers || []).map((tier, idx) => (
+                              <tr key={`universal_tier_${idx}`}>
+                                <td>
+                                  <input
+                                    className="pe-input"
+                                    type="number"
+                                    min="1"
+                                    value={tier.minQty}
+                                    onChange={(e) => updateUniversalTier(idx, "minQty", e.target.value)}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    className="pe-input"
+                                    type="number"
+                                    min="1"
+                                    value={tier.maxQty ?? ""}
+                                    onChange={(e) => updateUniversalTier(idx, "maxQty", e.target.value)}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    className="pe-input"
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={tier.percentOff}
+                                    onChange={(e) => updateUniversalTier(idx, "percentOff", e.target.value)}
+                                  />
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline btn-sm pe-variant-delete-btn"
+                                    onClick={() => removeUniversalTier(idx)}
+                                  >
+                                    <MdDeleteOutline /> Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <p className="text-muted" style={{ margin: 0 }}>
+                      Manual mode: set tiers per variant below.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={addVariantPricingTierToAll}
+                    >
+                      <MdAdd /> Add Tier to All Variants
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tierErrors.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                {tierErrors.map((error, idx) => (
+                  <p key={`tier_error_${idx}`} style={{ color: "#b91c1c", fontSize: 12, margin: "2px 0" }}>
+                    • {error}
+                  </p>
+                ))}
+              </div>
+            )}
 
             <div className="pe-inline-group pe-feature-row">
               <label className="pe-check">
@@ -1219,6 +1742,7 @@ export default function AddProduct() {
                 {!variationAttributeName || variationValues.length === 0 ? (
                   <p className="text-muted">Select an attribute and add values to generate variants.</p>
                 ) : (
+                  <>
                   <div className="table-wrap pe-variant-table-wrap">
                     <table className="pe-variant-table">
                       <thead>
@@ -1231,6 +1755,7 @@ export default function AddProduct() {
                           <th>Stock</th>
                           <th>Color Code</th>
                           <th>Image URL</th>
+                          {(form.variableTierMode || "manual") === "manual" && <th>Manual Tiers</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1342,11 +1867,104 @@ export default function AddProduct() {
                                 )}
                               </div>
                             </td>
+                            {(form.variableTierMode || "manual") === "manual" && (
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline btn-sm"
+                                  onClick={() => addVariantPricingTier(row.variantKey)}
+                                >
+                                  <MdAdd /> Add Tier
+                                </button>
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+
+                  {(form.variableTierMode || "manual") === "manual" && (
+                    <div style={{ marginTop: 12 }}>
+                      {variantRows.map((row) => (
+                        <div
+                          key={`variant_tier_${row.variantKey}`}
+                          style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, marginBottom: 10 }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                            <strong style={{ fontSize: 13 }}>{row.value} (Base ₹{Number(row.price) || 0})</strong>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              onClick={() => addVariantPricingTier(row.variantKey)}
+                            >
+                              <MdAdd /> Add Tier
+                            </button>
+                          </div>
+
+                          {(row.pricingTiers || []).length === 0 ? (
+                            <p className="text-muted" style={{ margin: 0, fontSize: 12 }}>No custom tiers.</p>
+                          ) : (
+                            <div className="table-wrap pe-variant-table-wrap">
+                              <table className="pe-variant-table">
+                                <thead>
+                                  <tr>
+                                    <th>Min Qty</th>
+                                    <th>Max Qty</th>
+                                    <th>Price</th>
+                                    <th></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(row.pricingTiers || []).map((tier, idx) => (
+                                    <tr key={`${row.variantKey}_tier_${idx}`}>
+                                      <td>
+                                        <input
+                                          className="pe-input"
+                                          type="number"
+                                          min="1"
+                                          value={tier.minQty}
+                                          onChange={(e) => updateVariantPricingTier(row.variantKey, idx, "minQty", e.target.value)}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="pe-input"
+                                          type="number"
+                                          min="1"
+                                          value={tier.maxQty ?? ""}
+                                          onChange={(e) => updateVariantPricingTier(row.variantKey, idx, "maxQty", e.target.value)}
+                                        />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="pe-input"
+                                          type="number"
+                                          min="0"
+                                          value={tier.price}
+                                          onChange={(e) => updateVariantPricingTier(row.variantKey, idx, "price", e.target.value)}
+                                        />
+                                      </td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline btn-sm pe-variant-delete-btn"
+                                          onClick={() => removeVariantPricingTier(row.variantKey, idx)}
+                                        >
+                                          <MdDeleteOutline /> Delete
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  </>
                 )}
               </div>
             )}
