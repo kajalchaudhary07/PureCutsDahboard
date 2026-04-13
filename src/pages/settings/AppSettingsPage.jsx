@@ -4,6 +4,8 @@ import {
   getBulkLeads,
   getDashboardMetricsSnapshotMeta,
   rebuildOrderCounters,
+  getAppSettings,
+  saveAppSettings,
   getSupportBotConfig,
   saveSupportBotConfig,
 } from "../../firestoreService";
@@ -18,9 +20,26 @@ export default function AppSettingsPage() {
     enableWhatsapp: true,
     defaultCurrency: "INR",
     taxPercent: 18,
+    delivery: {
+      pune: 19,
+      maharashtra: 30,
+      outsideMaharashtra: 89,
+      freeThreshold: 1000,
+    },
   });
 
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
   const update = (key, value) => setSettings((prev) => ({ ...prev, [key]: value }));
+  const updateDelivery = (key, value) =>
+    setSettings((prev) => ({
+      ...prev,
+      delivery: {
+        ...(prev.delivery || {}),
+        [key]: value,
+      },
+    }));
 
   const [botLoading, setBotLoading] = useState(true);
   const [botSaving, setBotSaving] = useState(false);
@@ -106,20 +125,36 @@ export default function AppSettingsPage() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      setSettingsLoading(true);
       setBotLoading(true);
       try {
-        const [cfg, leads] = await Promise.all([getSupportBotConfig(), getBulkLeads()]);
+        const [cfg, leads, appCfg] = await Promise.all([
+          getSupportBotConfig(),
+          getBulkLeads(),
+          getAppSettings(),
+        ]);
         if (cancelled) return;
         setBotConfig(cfg);
         setBulkLeads(leads);
         setStepOptionDrafts(buildOptionDrafts(cfg.steps));
+        setSettings((prev) => ({
+          ...prev,
+          ...appCfg,
+          delivery: {
+            ...(prev.delivery || {}),
+            ...(appCfg?.delivery || {}),
+          },
+        }));
         await loadMaintenanceMeta();
       } catch (err) {
         if (!cancelled) {
           toast.error(err?.message || "Could not load support bot config.");
         }
       } finally {
-        if (!cancelled) setBotLoading(false);
+        if (!cancelled) {
+          setBotLoading(false);
+          setSettingsLoading(false);
+        }
       }
     };
     load();
@@ -194,6 +229,53 @@ export default function AppSettingsPage() {
     }
   };
 
+  const normalizeNonNegativeInt = (value, fallback) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(0, Math.round(parsed));
+  };
+
+  const saveStoreSettings = async () => {
+    setSettingsSaving(true);
+    try {
+      const payload = {
+        maintenanceMode: Boolean(settings.maintenanceMode),
+        allowCod: Boolean(settings.allowCod),
+        autoApproveReviews: Boolean(settings.autoApproveReviews),
+        enableWhatsapp: Boolean(settings.enableWhatsapp),
+        defaultCurrency: String(settings.defaultCurrency || "INR").toUpperCase(),
+        taxPercent: normalizeNonNegativeInt(settings.taxPercent, 18),
+        delivery: {
+          pune: normalizeNonNegativeInt(settings.delivery?.pune, 19),
+          maharashtra: normalizeNonNegativeInt(settings.delivery?.maharashtra, 30),
+          outsideMaharashtra: normalizeNonNegativeInt(
+            settings.delivery?.outsideMaharashtra,
+            89
+          ),
+          freeThreshold: normalizeNonNegativeInt(
+            settings.delivery?.freeThreshold,
+            1000
+          ),
+        },
+      };
+
+      await saveAppSettings(payload);
+      setSettings((prev) => ({
+        ...prev,
+        ...payload,
+        delivery: {
+          ...(prev.delivery || {}),
+          ...payload.delivery,
+        },
+      }));
+      toast.success("App settings saved.");
+    } catch (err) {
+      toast.error(err?.message || "Could not save app settings.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const handleRebuildOrderCounters = async () => {
     if (!isSuperAdmin) {
       toast.error("Only super admins can run maintenance rebuilds.");
@@ -230,6 +312,14 @@ export default function AppSettingsPage() {
           <h2>App Settings</h2>
           <div className="breadcrumb">Home / <span>App Settings</span></div>
         </div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={saveStoreSettings}
+          disabled={settingsLoading || settingsSaving}
+        >
+          {settingsSaving ? "Saving..." : "Save App Settings"}
+        </button>
       </div>
 
       <div className="settings-grid">
@@ -314,10 +404,60 @@ export default function AppSettingsPage() {
                 onChange={(e) => update("taxPercent", Number(e.target.value || 0))}
               />
             </div>
+            <div className="form-group">
+              <label>Pune Delivery Charge (₹)</label>
+              <input
+                type="number"
+                min="0"
+                value={settings.delivery?.pune ?? 19}
+                onChange={(e) =>
+                  updateDelivery("pune", Number(e.target.value || 0))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Maharashtra Delivery Charge (₹)</label>
+              <input
+                type="number"
+                min="0"
+                value={settings.delivery?.maharashtra ?? 30}
+                onChange={(e) =>
+                  updateDelivery("maharashtra", Number(e.target.value || 0))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Outside Maharashtra Delivery Charge (₹)</label>
+              <input
+                type="number"
+                min="0"
+                value={settings.delivery?.outsideMaharashtra ?? 89}
+                onChange={(e) =>
+                  updateDelivery("outsideMaharashtra", Number(e.target.value || 0))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Free Delivery Threshold (₹)</label>
+              <input
+                type="number"
+                min="0"
+                value={settings.delivery?.freeThreshold ?? 1000}
+                onChange={(e) =>
+                  updateDelivery("freeThreshold", Number(e.target.value || 0))
+                }
+              />
+            </div>
             <div className="selected-order-card">
               <div className="font-medium">Current Configuration</div>
               <div className="text-muted">
                 {settings.defaultCurrency} currency with {settings.taxPercent}% tax.
+              </div>
+              <div className="text-muted" style={{ marginTop: 6 }}>
+                Delivery: Pune ₹{settings.delivery?.pune ?? 19}, Maharashtra ₹
+                {settings.delivery?.maharashtra ?? 30}, Outside Maharashtra ₹
+                {settings.delivery?.outsideMaharashtra ?? 89}, Free at ₹
+                {settings.delivery?.freeThreshold ?? 1000}
               </div>
             </div>
           </div>

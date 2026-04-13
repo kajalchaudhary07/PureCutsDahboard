@@ -1875,6 +1875,51 @@ export const saveRolePermissions = async (roleName, permissions) => {
   );
 };
 
+// ─── App Settings ─────────────────────────────────────────────────────────────
+const DEFAULT_APP_SETTINGS = {
+  maintenanceMode: false,
+  allowCod: true,
+  autoApproveReviews: false,
+  enableWhatsapp: true,
+  defaultCurrency: "INR",
+  taxPercent: 18,
+  delivery: {
+    pune: 19,
+    maharashtra: 30,
+    outsideMaharashtra: 89,
+    freeThreshold: 1000,
+  },
+};
+
+export const getAppSettings = async () => {
+  const ref = doc(db, "app_settings", "store");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return DEFAULT_APP_SETTINGS;
+
+  const data = snap.data() || {};
+  return {
+    ...DEFAULT_APP_SETTINGS,
+    ...data,
+    delivery: {
+      ...DEFAULT_APP_SETTINGS.delivery,
+      ...(data.delivery || {}),
+    },
+  };
+};
+
+export const saveAppSettings = async (settings) => {
+  const ref = doc(db, "app_settings", "store");
+  await setDoc(
+    ref,
+    {
+      ...settings,
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+};
+
 // ─── Support Bot Config / Leads ─────────────────────────────────────────────
 const DEFAULT_SUPPORT_BOT_CONFIG = {
   enabled: true,
