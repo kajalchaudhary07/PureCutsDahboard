@@ -32,7 +32,7 @@ import {
   getAttributes,
 } from "../../firestoreService";
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
-import { storage } from "../../firebaseConfig";
+import { auth, storage } from "../../firebaseConfig";
 
 const empty = {
   name: "", brand: "", category: "", price: "", originalPrice: "",
@@ -112,6 +112,118 @@ export default function AddProduct() {
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/_+/g, "_")
       .replace(/^_|_$/g, "");
+
+  const getFirebaseErrorCode = (error) => String(error?.code || "").toLowerCase();
+
+  const isAuthPermissionError = (error) => {
+    const code = getFirebaseErrorCode(error);
+    return [
+      "permission-denied",
+      "unauthenticated",
+      "storage/unauthorized",
+      "storage/unauthenticated",
+    ].some((token) => code.includes(token));
+  };
+
+  const isTransientFirebaseError = (error) => {
+    const code = getFirebaseErrorCode(error);
+    return [
+      "unavailable",
+      "deadline-exceeded",
+      "aborted",
+      "resource-exhausted",
+      "internal",
+      "unknown",
+      "cancelled",
+      "canceled",
+      "network-request-failed",
+      "storage/retry-limit-exceeded",
+      "storage/unknown",
+    ].some((token) => code.includes(token));
+  };
+
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const refreshAuthTokenIfPossible = async () => {
+    try {
+      if (auth.currentUser) {
+        await auth.currentUser.getIdToken(true);
+      }
+    } catch {
+      // Best-effort refresh; keep original error handling path.
+    }
+  };
+
+  const ensureWriteAccessClaims = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      throw Object.assign(new Error("User session not found"), {
+        code: "auth/unauthenticated",
+      });
+    }
+
+    const token = await user.getIdTokenResult(true);
+    const canWrite = token?.claims?.admin === true || token?.claims?.superAdmin === true;
+
+    if (!canWrite) {
+      throw Object.assign(
+        new Error("Your account does not currently have admin write claims"),
+        { code: "auth/insufficient-claims" }
+      );
+    }
+  };
+
+  const withFirebaseRetry = async (
+    fn,
+    { maxAttempts = 3, context = "operation", refreshAuthOnPermissionError = true } = {}
+  ) => {
+    let refreshed = false;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await fn();
+      } catch (error) {
+        const lastAttempt = attempt === maxAttempts;
+        if (
+          refreshAuthOnPermissionError &&
+          !refreshed &&
+          isAuthPermissionError(error)
+        ) {
+          refreshed = true;
+          await refreshAuthTokenIfPossible();
+          if (!lastAttempt) continue;
+        }
+
+        if (!lastAttempt && isTransientFirebaseError(error)) {
+          await wait(250 * 2 ** (attempt - 1));
+          continue;
+        }
+
+        error.__context = context;
+        throw error;
+      }
+    }
+  };
+
+  const uploadFileToPath = async (path, file, onProgress) => {
+    const storageRef = ref(storage, path);
+    return withFirebaseRetry(
+      () =>
+        new Promise((resolve, reject) => {
+          const task = uploadBytesResumable(storageRef, file);
+          task.on(
+            "state_changed",
+            (snap) => {
+              if (typeof onProgress === "function") {
+                onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+              }
+            },
+            reject,
+            () => getDownloadURL(task.snapshot.ref).then(resolve).catch(reject)
+          );
+        }),
+      { context: `upload:${path}` }
+    );
+  };
 
   useEffect(() => {
     getAttributes().then(setGlobalAttributes).catch(() => setGlobalAttributes([]));
@@ -486,33 +598,15 @@ export default function AddProduct() {
 
   const uploadImage = async () => {
     if (!imageFile) return form.image || "";
-    const storageRef = ref(storage, `products/${Date.now()}_${imageFile.name}`);
-    return new Promise((resolve, reject) => {
-      const task = uploadBytesResumable(storageRef, imageFile);
-      task.on(
-        "state_changed",
-        (snap) => setUploadProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-        reject,
-        () => getDownloadURL(task.snapshot.ref).then(resolve)
-      );
-    });
+    return uploadFileToPath(`products/${Date.now()}_${imageFile.name}`, imageFile, setUploadProgress);
   };
 
   const uploadAdditionalImages = async () => {
     if (!additionalImageFiles.length) return [];
 
-    const uploads = additionalImageFiles.map(({ file }) => {
-      const storageRef = ref(storage, `products/additional/${Date.now()}_${file.name}`);
-      return new Promise((resolve, reject) => {
-        const task = uploadBytesResumable(storageRef, file);
-        task.on(
-          "state_changed",
-          () => {},
-          reject,
-          () => getDownloadURL(task.snapshot.ref).then(resolve)
-        );
-      });
-    });
+    const uploads = additionalImageFiles.map(({ file }) =>
+      uploadFileToPath(`products/additional/${Date.now()}_${file.name}`, file)
+    );
 
     return Promise.all(uploads);
   };
@@ -520,18 +614,9 @@ export default function AddProduct() {
   const uploadShortDescriptionMedia = async () => {
     if (!shortDescriptionMediaFiles.length) return [];
 
-    const uploads = shortDescriptionMediaFiles.map((file) => {
-      const storageRef = ref(storage, `products/short-description/${Date.now()}_${file.name}`);
-      return new Promise((resolve, reject) => {
-        const task = uploadBytesResumable(storageRef, file);
-        task.on(
-          "state_changed",
-          () => {},
-          reject,
-          () => getDownloadURL(task.snapshot.ref).then(resolve)
-        );
-      });
-    });
+    const uploads = shortDescriptionMediaFiles.map((file) =>
+      uploadFileToPath(`products/short-description/${Date.now()}_${file.name}`, file)
+    );
 
     return Promise.all(uploads);
   };
@@ -539,18 +624,9 @@ export default function AddProduct() {
   const uploadDescriptionMedia = async () => {
     if (!descriptionMediaFiles.length) return [];
 
-    const uploads = descriptionMediaFiles.map((file) => {
-      const storageRef = ref(storage, `products/description/${Date.now()}_${file.name}`);
-      return new Promise((resolve, reject) => {
-        const task = uploadBytesResumable(storageRef, file);
-        task.on(
-          "state_changed",
-          () => {},
-          reject,
-          () => getDownloadURL(task.snapshot.ref).then(resolve)
-        );
-      });
-    });
+    const uploads = descriptionMediaFiles.map((file) =>
+      uploadFileToPath(`products/description/${Date.now()}_${file.name}`, file)
+    );
 
     return Promise.all(uploads);
   };
@@ -559,20 +635,12 @@ export default function AddProduct() {
     const safeVariantKey = String(variantKey || "variant")
       .replace(/[^a-z0-9_-]/gi, "_")
       .toLowerCase();
-    const storageRef = ref(storage, `products/variants/${Date.now()}_${safeVariantKey}_${file.name}`);
 
-    return new Promise((resolve, reject) => {
-      const task = uploadBytesResumable(storageRef, file);
-      task.on(
-        "state_changed",
-        (snap) => {
-          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
-          setVariantUploadProgress((prev) => ({ ...prev, [variantKey]: pct }));
-        },
-        reject,
-        () => getDownloadURL(task.snapshot.ref).then(resolve)
-      );
-    });
+    return uploadFileToPath(
+      `products/variants/${Date.now()}_${safeVariantKey}_${file.name}`,
+      file,
+      (pct) => setVariantUploadProgress((prev) => ({ ...prev, [variantKey]: pct }))
+    );
   };
 
   const handleVariantImageSelect = async (variantKey, e) => {
@@ -1024,6 +1092,8 @@ export default function AddProduct() {
 
     setSaving(true);
     try {
+      await ensureWriteAccessClaims();
+
       const imageUrl = await uploadImage();
       const additionalUrls = await uploadAdditionalImages();
       const descriptionMediaUrls = await uploadDescriptionMedia();
@@ -1130,11 +1200,15 @@ export default function AddProduct() {
       };
       let productId = id;
       if (isEdit) {
-        await updateProduct(id, data);
+        await withFirebaseRetry(() => updateProduct(id, data), {
+          context: "updateProduct",
+        });
         productId = id;
         toast.success("Product updated!");
       } else {
-        const created = await createProduct(data);
+        const created = await withFirebaseRetry(() => createProduct(data), {
+          context: "createProduct",
+        });
         productId = created.id;
         toast.success("Product added!");
       }
@@ -1156,16 +1230,26 @@ export default function AddProduct() {
               pricingType: normalizePricingTiers(row.pricingTiers || []).length > 0 ? "tier" : "",
               pricingTiers: normalizePricingTiers(row.pricingTiers || []),
             };
-            const created = await createVariant(productId, payload);
+            const created = await withFirebaseRetry(() => createVariant(productId, payload), {
+              context: `createVariant:${row.variantKey}`,
+            });
             keptDocIds.add(created.id);
           }
 
           if (isEdit && existingVariantIds.length > 0) {
             const stale = existingVariantIds.filter((docId) => !keptDocIds.has(docId));
-            await Promise.all(stale.map((docId) => deleteProductVariant(productId, docId)));
+            await Promise.all(
+              stale.map((docId) =>
+                withFirebaseRetry(() => deleteProductVariant(productId, docId), {
+                  context: `deleteVariant:${docId}`,
+                })
+              )
+            );
           }
         } else if (isEdit) {
-          await deleteAllProductVariants(productId);
+          await withFirebaseRetry(() => deleteAllProductVariants(productId), {
+            context: "deleteAllProductVariants",
+          });
           setVariantRows([]);
           setExistingVariantIds([]);
         }
@@ -1173,7 +1257,16 @@ export default function AddProduct() {
 
       navigate("/products");
     } catch (err) {
-      toast.error("Failed to save product");
+      if (getFirebaseErrorCode(err).includes("insufficient-claims")) {
+        toast.error("Admin claims are not synced yet for this account. Please re-login in dashboard.");
+      } else
+      if (isAuthPermissionError(err)) {
+        toast.error("Permission/session issue while saving. Please sign out and sign in again.");
+      } else if (isTransientFirebaseError(err)) {
+        toast.error("Temporary network issue while saving. Please retry.");
+      } else {
+        toast.error("Failed to save product");
+      }
       console.error(err);
     } finally {
       setSaving(false);
