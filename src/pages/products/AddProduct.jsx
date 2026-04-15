@@ -1070,11 +1070,6 @@ export default function AddProduct() {
         return false;
       }
       skuSet.add(row.sku.trim().toLowerCase());
-
-      if (!row.price) {
-        toast.error(`Price is required for ${row.value}`);
-        return false;
-      }
       if (row.stock === "" || row.stock === null || row.stock === undefined) {
         toast.error(`Stock is required for ${row.value}`);
         return false;
@@ -1086,7 +1081,6 @@ export default function AddProduct() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Product name is required"); return; }
-    if (!form.price)        { toast.error("Price is required"); return; }
     if (!validatePricingTiers()) return;
     if (!validateVariants()) return;
 
@@ -1425,7 +1419,7 @@ export default function AddProduct() {
 
             <div className="pe-grid-4">
               <input className="pe-input" placeholder="SKU" value={form.sku} onChange={(e) => set("sku", e.target.value)} />
-              <input className="pe-input" placeholder="Price" type="number" min="0" value={form.price} onChange={(e) => set("price", e.target.value)} required />
+              <input className="pe-input" placeholder="Price" type="number" min="0" value={form.price} onChange={(e) => set("price", e.target.value)} />
               <input className="pe-input" placeholder="Regular Price" type="number" min="0" value={form.originalPrice} onChange={(e) => set("originalPrice", e.target.value)} />
               <input className="pe-input" placeholder="Sale Price" type="number" min="0" value={form.salePrice} onChange={(e) => set("salePrice", e.target.value)} disabled={!form.onSale} />
             </div>
