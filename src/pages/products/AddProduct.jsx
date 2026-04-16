@@ -113,6 +113,56 @@ export default function AddProduct() {
       .replace(/_+/g, "_")
       .replace(/^_|_$/g, "");
 
+  const firstNonEmptyText = (...values) => {
+    for (const value of values) {
+      const text = String(value || "").trim();
+      if (text) return text;
+    }
+    return "";
+  };
+
+  const buildOrderedImageList = (...groups) => {
+    const seen = new Set();
+    const out = [];
+
+    const addOne = (value) => {
+      const text = String(value || "").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      out.push(text);
+    };
+
+    groups.forEach((group) => {
+      if (Array.isArray(group)) {
+        group.forEach(addOne);
+      } else {
+        addOne(group);
+      }
+    });
+
+    return out;
+  };
+
+  const toMillisSafe = (value) => {
+    if (!value) return 0;
+    if (typeof value?.toDate === "function") {
+      const date = value.toDate();
+      return Number.isFinite(date?.getTime?.()) ? date.getTime() : 0;
+    }
+    if (value instanceof Date) {
+      return Number.isFinite(value.getTime()) ? value.getTime() : 0;
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const withCacheBuster = (rawUrl, seed = Date.now()) => {
+    const url = String(rawUrl || "").trim();
+    if (!url) return "";
+    if (!seed) return url;
+    return url.includes("?") ? `${url}&v=${seed}` : `${url}?v=${seed}`;
+  };
+
   const getFirebaseErrorCode = (error) => String(error?.code || "").toLowerCase();
 
   const isAuthPermissionError = (error) => {
@@ -267,7 +317,15 @@ export default function AddProduct() {
               found.subsubCategory ||
               found.sub_sub_category ||
               "",
-            image: found.image || found.imageUrl || "",
+            image: firstNonEmptyText(
+              found.image,
+              found.imageUrl,
+              found.thumbnailUrl,
+              found.thumbnail,
+              found.thumb,
+              found.fullImageUrl,
+              Array.isArray(found.images) ? found.images[0] : ""
+            ),
             visibility: found.visibility || "publish",
             productType: found.productType || "single",
             tags: existingTags,
@@ -314,7 +372,22 @@ export default function AddProduct() {
                 }))
               : [],
           });
-          if (found.image || found.imageUrl) setImagePreview(found.image || found.imageUrl);
+          const existingPrimaryImage = firstNonEmptyText(
+            found.image,
+            found.imageUrl,
+            found.thumbnailUrl,
+            found.thumbnail,
+            found.thumb,
+            found.fullImageUrl,
+            Array.isArray(found.images) ? found.images[0] : ""
+          );
+          if (existingPrimaryImage) {
+            const previewStamp =
+              toMillisSafe(found.updatedAt) ||
+              toMillisSafe(found.imageContractUpdatedAt) ||
+              toMillisSafe(found.createdAt);
+            setImagePreview(withCacheBuster(existingPrimaryImage, previewStamp || Date.now()));
+          }
 
           getProductVariants(found.id).then((variants) => {
             const mapped = variants.map((v) => ({
@@ -596,9 +669,10 @@ export default function AddProduct() {
     e.target.value = "";
   };
 
-  const uploadImage = async () => {
-    if (!imageFile) return form.image || "";
-    return uploadFileToPath(`products/${Date.now()}_${imageFile.name}`, imageFile, setUploadProgress);
+  const uploadImage = async (pendingFileOverride = null) => {
+    const pendingFile = pendingFileOverride || imageFile || fileRef.current?.files?.[0] || null;
+    if (!pendingFile) return form.image || "";
+    return uploadFileToPath(`products/${Date.now()}_${pendingFile.name}`, pendingFile, setUploadProgress);
   };
 
   const uploadAdditionalImages = async () => {
@@ -1088,7 +1162,9 @@ export default function AddProduct() {
     try {
       await ensureWriteAccessClaims();
 
-      const imageUrl = await uploadImage();
+      const pendingThumbnailFile = imageFile || fileRef.current?.files?.[0] || null;
+      const hasPendingThumbnailFile = Boolean(pendingThumbnailFile);
+      const imageUrl = await uploadImage(pendingThumbnailFile);
       const additionalUrls = await uploadAdditionalImages();
       const descriptionMediaUrls = await uploadDescriptionMedia();
       const shortMediaUrls = await uploadShortDescriptionMedia();
@@ -1145,6 +1221,23 @@ export default function AddProduct() {
         form.productType === "variable" && variableTierMode === "universal"
           ? normalizePercentageTiers(form.variableUniversalTiers || [])
           : [];
+      const primaryImage = hasPendingThumbnailFile
+        ? String(imageUrl || "").trim()
+        : firstNonEmptyText(
+            imageUrl,
+            form.image,
+            form.imageUrl,
+            form.thumbnailUrl,
+            form.thumbnail,
+            form.thumb,
+            form.fullImageUrl
+          );
+
+      if (hasPendingThumbnailFile && !primaryImage) {
+        throw Object.assign(new Error("Thumbnail upload returned empty URL"), {
+          code: "storage/empty-url",
+        });
+      }
       const data = {
         ...form,
         shortDescription: mergedHighlights,
@@ -1171,8 +1264,18 @@ export default function AddProduct() {
         rating:        Number(form.rating)         || 0,
         reviews:       Number(form.reviews)        || 0,
         stock:         form.manageStock ? Number(form.stock) || 0 : 0,
-        image: imageUrl,
-        imageUrl: imageUrl,
+        image: primaryImage,
+        imageUrl: primaryImage,
+        thumbnailUrl: primaryImage,
+        thumbnail: primaryImage,
+        thumb: primaryImage,
+        fullImageUrl: primaryImage,
+        images: buildOrderedImageList(
+          primaryImage,
+          form.images,
+          mergedAdditionalImages,
+          form.additionalImages
+        ),
         tags: finalTags,
         tag: finalTags[0] || form.tag || "",
         additionalImages: mergedAdditionalImages,
@@ -2074,7 +2177,15 @@ export default function AddProduct() {
               <h3>Product Thumbnail</h3>
             </div>
             <input ref={fileRef} type="file" accept="image/*" onChange={handleImageChange} style={{ display: "none" }} />
-            <div className="pe-thumb-upload" onClick={() => fileRef.current.click()}>
+            <div
+              className="pe-thumb-upload"
+              onClick={() => {
+                if (fileRef.current) {
+                  fileRef.current.value = "";
+                  fileRef.current.click();
+                }
+              }}
+            >
               {imagePreview ? (
                 <img src={imagePreview} className="pe-thumb-preview" alt="thumbnail" />
               ) : (
@@ -2093,8 +2204,9 @@ export default function AddProduct() {
               value={!imageFile ? form.image : ""}
               onChange={(e) => {
                 setImageFile(null);
-                setImagePreview(e.target.value || null);
-                set("image", e.target.value);
+                const nextValue = e.target.value;
+                setImagePreview(nextValue ? withCacheBuster(nextValue) : null);
+                set("image", nextValue);
               }}
             />
           </div>

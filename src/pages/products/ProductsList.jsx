@@ -16,6 +16,49 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 
 const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax"];
 
+const firstNonEmptyText = (...values) => {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const toMillisSafe = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toDate === "function") {
+    const date = value.toDate();
+    return Number.isFinite(date?.getTime?.()) ? date.getTime() : 0;
+  }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : 0;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const resolveProductThumb = (product = {}) => {
+  const raw = firstNonEmptyText(
+    product.thumbnailUrl,
+    product.thumbnail,
+    product.thumb,
+    product.image,
+    product.imageUrl,
+    Array.isArray(product.images) ? product.images[0] : "",
+    Array.isArray(product.additionalImages) ? product.additionalImages[0] : ""
+  );
+
+  if (!raw) return "";
+
+  const stamp =
+    toMillisSafe(product.updatedAt) ||
+    toMillisSafe(product.imageContractUpdatedAt) ||
+    toMillisSafe(product.createdAt);
+
+  if (!stamp) return raw;
+  return raw.includes("?") ? `${raw}&v=${stamp}` : `${raw}?v=${stamp}`;
+};
+
 export default function ProductsList() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -388,8 +431,8 @@ export default function ProductsList() {
                         <>
                     <td className="text-muted">{i + 1}</td>
                     <td>
-                      {p.image ? (
-                        <img src={p.image} alt={p.name} className="table-img" />
+                      {resolveProductThumb(p) ? (
+                        <img src={resolveProductThumb(p)} alt={p.name} className="table-img" />
                       ) : (
                         <div className="no-img"><MdImage /></div>
                       )}
