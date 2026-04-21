@@ -37,6 +37,7 @@ import { auth, storage } from "../../firebaseConfig";
 const empty = {
   name: "", brand: "", category: "", price: "", originalPrice: "",
   subCategory: "", subSubCategory: "", rating: "", reviews: "", image: "", tag: "", size: "",
+  contactNumber: "",
   deliveryTime: "15 MINS", isPopular: false, isRecommended: false, stock: "",
   showInStartFirstOrder: false,
   showInRecommendedSalon: false,
@@ -275,6 +276,30 @@ export default function AddProduct() {
     );
   };
 
+  const normalizeCategoryName = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z]+/g, "");
+
+  const isFurnitureCategoryName = (value) => {
+    const normalized = normalizeCategoryName(value);
+    return (
+      normalized === "furniture" ||
+      normalized === "furnitures" ||
+      normalized.startsWith("furniture")
+    );
+  };
+
+  const isFurnitureProductForm = (currentForm) => {
+    const selected = Array.isArray(currentForm?.selectedCategories)
+      ? currentForm.selectedCategories
+      : [];
+    return selected.some(isFurnitureCategoryName) || isFurnitureCategoryName(currentForm?.category);
+  };
+
+  const furnitureSelected = isFurnitureProductForm(form);
+
   useEffect(() => {
     getAttributes().then(setGlobalAttributes).catch(() => setGlobalAttributes([]));
   }, []);
@@ -326,6 +351,7 @@ export default function AddProduct() {
               found.fullImageUrl,
               Array.isArray(found.images) ? found.images[0] : ""
             ),
+            contactNumber: String(found.contactNumber || "").replace(/\D+/g, "").slice(0, 10),
             visibility: found.visibility || "publish",
             productType: found.productType || "single",
             tags: existingTags,
@@ -1155,6 +1181,19 @@ export default function AddProduct() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Product name is required"); return; }
+    const normalizedContactNumber = String(form.contactNumber || "")
+      .replace(/\D+/g, "")
+      .slice(0, 10);
+    if (furnitureSelected) {
+      if (!normalizedContactNumber) {
+        toast.error("Contact number is required for furniture products");
+        return;
+      }
+      if (!/^[6-9]\d{9}$/.test(normalizedContactNumber)) {
+        toast.error("Enter a valid 10-digit India mobile number");
+        return;
+      }
+    }
     if (!validatePricingTiers()) return;
     if (!validateVariants()) return;
 
@@ -1240,6 +1279,7 @@ export default function AddProduct() {
       }
       const data = {
         ...form,
+        contactNumber: furnitureSelected ? normalizedContactNumber : "",
         shortDescription: mergedHighlights,
         highlights: mergedHighlights,
         howToUse: form.howToUse || "",
@@ -1753,6 +1793,26 @@ export default function AddProduct() {
                 <input className="pe-input pe-stock-inline" placeholder="Stock" type="number" min="0" value={form.stock} onChange={(e) => set("stock", e.target.value)} />
               )}
             </div>
+
+            {furnitureSelected && (
+              <div style={{ marginTop: 12 }}>
+                <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>
+                  Furniture Contact Number
+                </label>
+                <input
+                  className="pe-input"
+                  placeholder="10-digit mobile number"
+                  value={form.contactNumber}
+                  onChange={(e) => set("contactNumber", e.target.value.replace(/\D+/g, "").slice(0, 10))}
+                  inputMode="numeric"
+                  maxLength={10}
+                  required
+                />
+                <p className="text-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  This number will be shown at the top of furniture products.
+                </p>
+              </div>
+            )}
 
             <div className="pe-variable-box" style={{ marginTop: 8 }}>
               <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>

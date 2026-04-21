@@ -14,7 +14,27 @@ import {
 import { getProductsPaginated, deleteProduct, updateProduct } from "../../firestoreService";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
-const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax"];
+const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax", "Furnitures"];
+
+const normalizeCategoryName = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]+/g, "");
+
+const isFurnitureCategoryName = (value) => {
+  const normalized = normalizeCategoryName(value);
+  return (
+    normalized === "furniture" ||
+    normalized === "furnitures" ||
+    normalized.startsWith("furniture")
+  );
+};
+
+const isFurnitureProduct = (product = {}) => {
+  const selected = Array.isArray(product.selectedCategories) ? product.selectedCategories : [];
+  return selected.some(isFurnitureCategoryName) || isFurnitureCategoryName(product.category);
+};
 
 const firstNonEmptyText = (...values) => {
   for (const value of values) {
@@ -438,6 +458,11 @@ export default function ProductsList() {
                       )}
                     </td>
                     <td>
+                      {isFurnitureProduct(p) && p.contactNumber ? (
+                        <div className="text-muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                          Contact: {String(p.contactNumber).replace(/\D+/g, "").slice(0, 10)}
+                        </div>
+                      ) : null}
                       <div className="font-medium">{p.name}</div>
                       <div className="text-muted" style={{ fontSize: 12 }}>{p.size}</div>
                     </td>
