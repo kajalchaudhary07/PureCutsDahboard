@@ -1,0 +1,16 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "purecuts.in",
+      "sha256_cert_fingerprints": [
+        "5E:0B:E9:9E:1C:F0:4D:ED:7E:F2:E2:0B:C3:DA:1B:52:6D:EA:0E:D5:01:71:6C:68:CD:E5:97:1A:C9:6B:A8:23",
+        "AA:89:42:22:31:39:70:B6:E0:1D:90:43:F6:F5:F8:CD:E7:B8:43:1A:E4:56:C3:8D:72:F8:F7:6B:77:3C:A6:0C",
+        "6B:DE:2A:14:A2:EE:12:1C:EC:52:0B:A7:A4:6A:E6:25:CA:09:6A:A2:52:B2:1B:F7:DF:E6:54:48:DB:71:6B:E7"
+      ]
+    }
+  }
+]
