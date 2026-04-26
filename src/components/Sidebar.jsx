@@ -18,6 +18,7 @@ import {
   MdShoppingCart,
   MdReceiptLong,
   MdRateReview,
+  MdImage,
   MdViewCarousel,
   MdLocalOffer,
   MdNotificationsNone,
@@ -59,6 +60,7 @@ const menuSections = [
       { label: "Orders", path: "/orders", icon: <MdShoppingCart /> },
       { label: "Order Details", path: "/order-details", icon: <MdReceiptLong /> },
       { label: "Product Reviews", path: "/product-reviews", icon: <MdRateReview /> },
+      { label: "Product Suggestions", path: "/product-suggestions", icon: <MdImage /> },
     ],
   },
   {
@@ -114,6 +116,7 @@ const PATH_RESOURCE_MAP = {
   "/orders": "Orders",
   "/order-details": "Orders",
   "/product-reviews": "Products",
+  "/product-suggestions": "Products",
   "/banners": "Media",
   "/coupons": "Media",
   "/notifications": "Media",

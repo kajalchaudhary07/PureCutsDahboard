@@ -19,7 +19,8 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { db, functions } from "./firebaseConfig";
+import { getDownloadURL, deleteObject, ref, uploadBytesResumable } from "firebase/storage";
+import { db, functions, storage } from "./firebaseConfig";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
 
@@ -266,6 +267,146 @@ export const deleteBanner = (id) => deleteItem("banners", id);
 
 export const toggleBannerStatus = (id, active) =>
   updateBanner(id, { active: !Boolean(active) });
+
+// ─── Product Suggestions ────────────────────────────────────────────────────
+const normalizeProductSuggestion = (raw = {}) => {
+  const status = String(raw.status || "submitted").trim().toLowerCase();
+
+  return {
+    ...raw,
+    text: String(raw.text || "").trim(),
+    imageUrl: String(raw.imageUrl || raw.image || "").trim(),
+    imagePath: String(raw.imagePath || "").trim(),
+    uid: String(raw.uid || raw.userId || "").trim(),
+    orderRef: String(raw.orderRef || raw.orderId || raw.orderNumber || "").trim(),
+    orderId: String(raw.orderId || raw.orderRef || raw.orderNumber || "").trim(),
+    status,
+    adminNotes: String(raw.adminNotes || "").trim(),
+  };
+};
+
+export const getProductSuggestionsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    const allRows = await getDocs(collection(db, "productSuggestions"));
+    const rows = allRows.docs
+      .map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillisSafe(b.createdAt || b.updatedAt) - toMillisSafe(a.createdAt || a.updatedAt));
+    const offset = Number(cursor.__fallbackOffset || 0);
+    const pageRows = rows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + pageRows.length;
+    return {
+      rows: pageRows,
+      nextCursor: nextOffset < rows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < rows.length,
+    };
+  }
+
+  let builtQuery = query(
+    collection(db, "productSuggestions"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "productSuggestions"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  try {
+    const snap = await getDocs(builtQuery);
+    return {
+      rows: snap.docs.map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() })),
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    const snap = await getDocs(collection(db, "productSuggestions"));
+    const rows = snap.docs
+      .map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillisSafe(b.createdAt || b.updatedAt) - toMillisSafe(a.createdAt || a.updatedAt));
+    const offset = Number(cursor?.__fallbackOffset || 0);
+    const pageRows = rows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + pageRows.length;
+    return {
+      rows: pageRows,
+      nextCursor: nextOffset < rows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < rows.length,
+    };
+  }
+};
+
+export const getProductSuggestionById = async (id) => {
+  const cleanId = String(id || "").trim();
+  if (!cleanId) return null;
+  const snap = await getDoc(doc(db, "productSuggestions", cleanId));
+  if (!snap.exists()) return null;
+  return normalizeProductSuggestion({ id: snap.id, ...snap.data() });
+};
+
+export const uploadProductSuggestionImage = async ({ uid, file, onProgress }) => {
+  const cleanUid = String(uid || "").trim();
+  if (!cleanUid) throw new Error("uid is required");
+  if (!file) throw new Error("file is required");
+
+  const lower = String(file.name || "").toLowerCase();
+  if (!lower.match(/\.(png|jpe?g|webp|gif)$/)) {
+    throw new Error("Only image files are supported");
+  }
+
+  const safeName = String(file.name || "suggestion")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "");
+  const path = `productSuggestions/${cleanUid}/${Date.now()}_${safeName}`;
+  const storageRef = ref(storage, path);
+
+  return await new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(storageRef, file, {
+      contentType: file.type || "image/jpeg",
+      cacheControl: "public,max-age=31536000,immutable",
+    });
+    task.on(
+      "state_changed",
+      (snap) => {
+        if (typeof onProgress === "function" && snap.totalBytes > 0) {
+          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+        }
+      },
+      reject,
+      () => getDownloadURL(task.snapshot.ref).then((downloadUrl) => resolve({ imageUrl: downloadUrl, imagePath: path })).catch(reject)
+    );
+  });
+};
+
+export const addProductSuggestion = async (data) => {
+  const payload = normalizeProductSuggestion({
+    ...data,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  const refDoc = await addDoc(collection(db, "productSuggestions"), payload);
+  return refDoc;
+};
+
+export const updateProductSuggestion = async (id, data) => {
+  return await updateItem("productSuggestions", id, normalizeProductSuggestion(data));
+};
+
+export const deleteProductSuggestion = async (id) => deleteItem("productSuggestions", id);
+
+export const deleteProductSuggestionImage = async (imagePath) => {
+  const path = String(imagePath || "").trim();
+  if (!path) return;
+  await deleteObject(ref(storage, path));
+};
 
 // ─── Product Reviews ──────────────────────────────────────────────────────────
 const REVIEW_COLLECTIONS = ["productReviews", "reviews"];
