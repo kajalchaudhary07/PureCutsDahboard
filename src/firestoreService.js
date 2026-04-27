@@ -810,7 +810,7 @@ const normalizeOrder = (raw = {}) => {
     raw.amount ?? raw.total ?? raw.totalAmount ?? raw.grandTotal ?? raw.payableAmount ?? 0
   );
 
-  const orderStatus = String(raw.orderStatus || raw.status || "placed")
+  const rawOrderStatus = String(raw.orderStatus || raw.status || "placed")
     .trim()
     .toLowerCase();
 
@@ -823,6 +823,23 @@ const normalizeOrder = (raw = {}) => {
   )
     .trim()
     .toLowerCase();
+
+  const editMeta = raw.editMeta && typeof raw.editMeta === "object"
+    ? {
+        ...raw.editMeta,
+        isEditOrder: raw.editMeta.isEditOrder === true,
+      }
+    : null;
+
+  const isEditOrder =
+    raw.isEditOrder === true ||
+    Boolean(editMeta) ||
+    String(raw.originalOrderRef || raw.originalOrderId || raw.originalOrderDocumentId || "")
+      .trim()
+      .length > 0;
+
+  const orderStatus =
+    rawOrderStatus === "placed" && isEditOrder ? "edited" : rawOrderStatus;
 
   return {
     ...raw,
@@ -842,7 +859,70 @@ const normalizeOrder = (raw = {}) => {
     paymentStatus,
     paymentMethod,
     paymentMode: paymentMethod,
+    editMeta,
+    isEditOrder,
   };
+};
+
+const dedupeOrdersByOrderRef = (orders = []) => {
+  const scoreOrderPreference = (order = {}) => {
+    const isEditDoc = Boolean(
+      order.isEditOrder ||
+      order.editMeta ||
+      order.originalOrderRef ||
+      order.originalOrderId ||
+      order.originalOrderDocumentId
+    );
+    const isSourceMarkedEdited = Boolean(
+      order.editedByOrderDocumentId || order.editedByOrderId
+    );
+    const itemsCount = Array.isArray(order.items) ? order.items.length : 0;
+
+    return (
+      (isEditDoc ? 1000 : 0) +
+      (isSourceMarkedEdited ? -400 : 0) +
+      itemsCount
+    );
+  };
+
+  const byRef = new Map();
+  const loose = [];
+
+  for (const order of orders) {
+    const ref = String(order.orderRef || order.orderId || order.orderNumber || "").trim();
+    if (!ref) {
+      loose.push(order);
+      continue;
+    }
+
+    const existing = byRef.get(ref);
+    if (!existing) {
+      byRef.set(ref, order);
+      continue;
+    }
+
+    const existingScore = scoreOrderPreference(existing);
+    const incomingScore = scoreOrderPreference(order);
+    if (incomingScore > existingScore) {
+      byRef.set(ref, order);
+      continue;
+    }
+    if (incomingScore < existingScore) {
+      continue;
+    }
+
+    const existingTs = toMillisSafe(existing.updatedAt || existing.createdAt);
+    const incomingTs = toMillisSafe(order.updatedAt || order.createdAt);
+    if (incomingTs >= existingTs) {
+      byRef.set(ref, order);
+    }
+  }
+
+  return [...byRef.values(), ...loose].sort(
+    (a, b) =>
+      toMillisSafe(b.createdAt || b.updatedAt) -
+      toMillisSafe(a.createdAt || a.updatedAt)
+  );
 };
 
 const resolveOrderOwnerId = (order = {}) => {
@@ -891,7 +971,7 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
 
   const userMap = Object.fromEntries(userEntries);
 
-  return orders.map((order) => {
+  const normalized = orders.map((order) => {
     const ownerId = resolveOrderOwnerId(order);
     const profile = userMap[ownerId] || {};
 
@@ -968,6 +1048,8 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
 
     return normalizeOrder(enriched);
   });
+
+  return dedupeOrdersByOrderRef(normalized);
 };
 
 export const getOrdersPaginated = async ({ pageSize = DEFAULT_PAGE_SIZE, cursor = null } = {}) => {
@@ -1711,6 +1793,7 @@ const isPendingOrderStatus = (value) => {
     "canceled",
     "refunded",
     "failed",
+    "edited",
   ].includes(status);
 };
 

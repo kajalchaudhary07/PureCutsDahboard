@@ -133,6 +133,46 @@ const getPaymentMode = (order = {}) =>
     .trim()
     .toUpperCase();
 
+const isEditedOrder = (order = {}) => Boolean(
+  order.isEditOrder || order.editMeta || order.originalOrderRef || order.originalOrderId
+);
+
+const getLockedQuantities = (order = {}) => {
+  const editMeta = order.editMeta;
+  const raw = editMeta && typeof editMeta === "object" ? editMeta.lockedQuantities : null;
+  if (!raw || typeof raw !== "object") return {};
+
+  return Object.entries(raw).reduce((acc, [key, value]) => {
+    const qty = Number(value || 0);
+    if (key && Number.isFinite(qty) && qty > 0) {
+      acc[key] = qty;
+    }
+    return acc;
+  }, {});
+};
+
+const getCombinedItemsTotal = (order = {}) => {
+  const items = getItems(order);
+  return items.reduce((sum, item) => {
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+    const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+    return sum + qty * unitPrice;
+  }, 0);
+};
+
+const getChargeableItemsTotal = (order = {}) => {
+  const items = getItems(order);
+  const locked = getLockedQuantities(order);
+  return items.reduce((sum, item) => {
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+    const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+    const productId = String(item.productId || item.id || "").trim();
+    const lockedQty = locked[productId] || 0;
+    const chargeableQty = qty > lockedQty ? qty - lockedQty : 0;
+    return sum + chargeableQty * unitPrice;
+  }, 0);
+};
+
 export default function OrderDetailsPage() {
   const { id: routeOrderId } = useParams();
   const navigate = useNavigate();
@@ -206,8 +246,15 @@ export default function OrderDetailsPage() {
   const addressLines = getAddressLines(order || {});
   const items = getItems(order || {});
   const orderAmount = getAmount(order || {});
+  const combinedItemsTotal = getCombinedItemsTotal(order || {});
+  const chargeableItemsTotal = getChargeableItemsTotal(order || {});
+  const totalToDisplay = isEditedOrder(order || {})
+    ? (combinedItemsTotal > 0 ? combinedItemsTotal : orderAmount)
+    : orderAmount;
   const orderStatus = normalizeStatus(order?.orderStatus || order?.status, "placed");
   const paymentStatus = normalizeStatus(order?.paymentStatus, "pending");
+  const editSourceRef = order?.originalOrderRef || order?.originalOrderId || order?.editMeta?.sourceOrderRef || order?.editMeta?.sourceOrderId || "";
+  const lockedQuantities = getLockedQuantities(order || {});
 
   return (
     <>
@@ -292,6 +339,18 @@ export default function OrderDetailsPage() {
               </div>
 
               <div className="order-details-grid">
+                {isEditedOrder(order) ? (
+                  <div className="order-detail-box full" style={{ background: "#FAF5FF", borderColor: "#E9D5FF" }}>
+                    <h4>Edited Order</h4>
+                    <p>
+                      This order was placed as an edit of <strong>{editSourceRef || "the previous order"}</strong>.
+                    </p>
+                    <p>
+                      Original order remains saved and the new order is tracked separately.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="order-detail-box">
                   <h4>Customer</h4>
                   <p><strong>{customer.name}</strong></p>
@@ -303,6 +362,9 @@ export default function OrderDetailsPage() {
                   <h4>Status</h4>
                   <p>
                     Order: <span className="badge badge-blue">{orderStatus.toUpperCase()}</span>
+                    {isEditedOrder(order) ? (
+                      <span className="badge" style={{ marginLeft: 8, background: "#f3e8ff", color: "#6d28d9" }}>EDITED</span>
+                    ) : null}
                   </p>
                   <p>
                     Payment: <span className={`badge ${paymentStatus === "paid" ? "badge-green" : "badge-gray"}`}>
@@ -312,7 +374,12 @@ export default function OrderDetailsPage() {
                   <p>
                     Payment Mode: <strong>{getPaymentMode(order)}</strong>
                   </p>
-                  <p>Total: <strong>{formatCurrency(orderAmount)}</strong></p>
+                  <p>Total: <strong>{formatCurrency(totalToDisplay)}</strong></p>
+                  {isEditedOrder(order) ? (
+                    <p className="text-muted" style={{ fontSize: 12 }}>
+                      Add-on charged: <strong>{formatCurrency(chargeableItemsTotal)}</strong>
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="order-detail-box full">
@@ -360,16 +427,27 @@ export default function OrderDetailsPage() {
                       items.map((item, idx) => {
                         const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
                         const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+                        const productId = String(item.productId || item.id || "").trim();
+                        const lockedQty = lockedQuantities[productId] || 0;
+                        const chargeableQty = qty > lockedQty ? qty - lockedQty : 0;
                         const lineTotal = qty * unitPrice;
+                        const chargeableLineTotal = chargeableQty * unitPrice;
 
                         return (
                           <tr key={item.orderItemId || `${item.productId || item.id || "item"}-${idx}`}>
                             <td className="text-muted">{idx + 1}</td>
                             <td>{item.name || item.title || `Item ${idx + 1}`}</td>
                             <td className="text-muted">{item.productId || item.id || "—"}</td>
-                            <td>{qty}</td>
+                            <td>{lockedQty > 0 ? `${qty} (+${lockedQty} previous)` : qty}</td>
                             <td>{formatCurrency(unitPrice)}</td>
-                            <td className="font-medium">{formatCurrency(lineTotal)}</td>
+                            <td className="font-medium">
+                              {formatCurrency(lineTotal)}
+                              {lockedQty > 0 ? (
+                                <div className="text-muted" style={{ fontSize: 11 }}>
+                                  Charged now: {formatCurrency(chargeableLineTotal)}
+                                </div>
+                              ) : null}
+                            </td>
                           </tr>
                         );
                       })

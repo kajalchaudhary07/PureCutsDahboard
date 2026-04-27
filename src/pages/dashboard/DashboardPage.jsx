@@ -23,6 +23,10 @@ const toMillis = (value) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const isEditedOrder = (order = {}) => Boolean(
+  order.isEditOrder || order.editMeta || order.originalOrderRef || order.originalOrderId
+);
+
 export default function DashboardPage() {
   const [orders, setOrders] = useState([]);
   const [snapshot, setSnapshot] = useState({
@@ -204,9 +208,14 @@ export default function DashboardPage() {
                     <td className="font-medium">#{order.orderId || order.code || order.id}</td>
                     <td>{order.customerName || order.customer?.name || "Unknown"}</td>
                     <td>
-                      <span className="badge badge-gray">
-                        {order.orderStatus || order.status || "new"}
-                      </span>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <span className="badge badge-gray">
+                          {order.orderStatus || order.status || "new"}
+                        </span>
+                        {isEditedOrder(order) ? (
+                          <span className="badge" style={{ background: "#f3e8ff", color: "#6d28d9" }}>edited</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td>₹{money(order.totalAmount ?? order.total ?? order.grandTotal ?? 0)}</td>
                   </tr>
