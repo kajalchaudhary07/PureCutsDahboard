@@ -13,6 +13,7 @@ import {
   MdOutlineSell,
   MdOutlinePhotoLibrary,
   MdAdd,
+  MdEdit,
   MdSell,
   MdInventory,
 } from "react-icons/md";
@@ -26,6 +27,7 @@ import {
   getSubSubCategories,
   addSubCategory,
   createVariant,
+  updateVariant,
   getProductVariants,
   deleteProductVariant,
   deleteAllProductVariants,
@@ -90,6 +92,10 @@ export default function AddProduct() {
   const [existingVariantIds, setExistingVariantIds] = useState([]);
   const [variantUploadProgress, setVariantUploadProgress] = useState({});
   const [variantDeleteProgress, setVariantDeleteProgress] = useState({});
+  const [attributeEditState, setAttributeEditState] = useState({
+    name: "",
+    valuesText: "",
+  });
   const [tierErrors, setTierErrors] = useState([]);
   const fileRef = useRef();
   const additionalRef = useRef();
@@ -851,6 +857,45 @@ export default function AddProduct() {
     set("attributes", form.attributes.filter((attr) => attr.name !== name));
   };
 
+  const startAttributeEdit = (attr) => {
+    setAttributeEditState({
+      name: attr.name,
+      valuesText: Array.isArray(attr.values) ? attr.values.join(", ") : "",
+    });
+  };
+
+  const cancelAttributeEdit = () => {
+    setAttributeEditState({ name: "", valuesText: "" });
+  };
+
+  const saveAttributeEdit = () => {
+    const targetName = String(attributeEditState.name || "").trim();
+    if (!targetName) return;
+
+    const nextValues = Array.from(
+      new Set(
+        String(attributeEditState.valuesText || "")
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean)
+      )
+    );
+
+    if (nextValues.length === 0) {
+      toast.error("Add at least one value for this attribute");
+      return;
+    }
+
+    set(
+      "attributes",
+      form.attributes.map((attr) =>
+        attr.name === targetName ? { ...attr, values: nextValues } : attr
+      )
+    );
+    setAttributeEditState({ name: "", valuesText: "" });
+    toast.success("Attribute updated");
+  };
+
   const variationAttribute = form.attributes.find((a) => a.useForVariations !== false);
   const variationAttributeName = variationAttribute?.name || "";
   const variationValues = Array.isArray(variationAttribute?.values)
@@ -1367,10 +1412,17 @@ export default function AddProduct() {
               pricingType: normalizePricingTiers(row.pricingTiers || []).length > 0 ? "tier" : "",
               pricingTiers: normalizePricingTiers(row.pricingTiers || []),
             };
-            const created = await withFirebaseRetry(() => createVariant(productId, payload), {
-              context: `createVariant:${row.variantKey}`,
-            });
-            keptDocIds.add(created.id);
+            if (isEdit && row.variantDocId) {
+              await withFirebaseRetry(() => updateVariant(productId, row.variantDocId, payload), {
+                context: `updateVariant:${row.variantDocId}`,
+              });
+              keptDocIds.add(row.variantDocId);
+            } else {
+              const created = await withFirebaseRetry(() => createVariant(productId, payload), {
+                context: `createVariant:${row.variantKey}`,
+              });
+              keptDocIds.add(created.id);
+            }
           }
 
           if (isEdit && existingVariantIds.length > 0) {
@@ -1964,6 +2016,26 @@ export default function AddProduct() {
                               <span key={val} className="pa-display-chip">{val}</span>
                             ))}
                       </div>
+                      {attributeEditState.name === attr.name ? (
+                        <div style={{ width: "100%", marginTop: 8, display: "grid", gap: 8 }}>
+                          <input
+                            className="pe-input"
+                            placeholder="Enter values separated by commas"
+                            value={attributeEditState.valuesText}
+                            onChange={(e) =>
+                              setAttributeEditState((prev) => ({ ...prev, valuesText: e.target.value }))
+                            }
+                          />
+                          <div className="flex gap-2">
+                            <button type="button" className="btn btn-primary btn-sm" onClick={saveAttributeEdit}>
+                              Save
+                            </button>
+                            <button type="button" className="btn btn-outline btn-sm" onClick={cancelAttributeEdit}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       <label className="pe-check" style={{ marginLeft: "auto" }}>
                         <input
                           type="checkbox"
@@ -1972,6 +2044,15 @@ export default function AddProduct() {
                         />
                         Use for variations
                       </label>
+                      <button
+                        type="button"
+                        className="pe-delete-btn"
+                        onClick={() => startAttributeEdit(attr)}
+                        style={{ marginLeft: 8 }}
+                        title="Edit attribute values"
+                      >
+                        <MdEdit />
+                      </button>
                       <button
                         type="button"
                         className="pe-delete-btn"
@@ -2018,6 +2099,9 @@ export default function AddProduct() {
                                   <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{row.value}</span>
                                 </div>
                               ) : row.value}
+                              {!row.variantDocId ? (
+                                <div className="text-muted" style={{ fontSize: 11 }}>New variation</div>
+                              ) : null}
                             </td>
                             <td>
                               <input

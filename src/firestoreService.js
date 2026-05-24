@@ -122,6 +122,13 @@ export const createVariant = async (productId, data) => {
   });
 };
 
+export const updateVariant = async (productId, variantId, data) => {
+  return await updateDoc(doc(db, "products", productId, "variants", variantId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+};
+
 export const getProductVariants = async (productId) => {
   const snap = await getDocs(
     query(collection(db, "products", productId, "variants"), orderBy("createdAt", "asc"))
@@ -634,6 +641,17 @@ export const deleteProductReview = async (
 };
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
+const normalizePaymentMethod = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+
+const isCodPaymentMethod = (value = "") => {
+  const normalized = normalizePaymentMethod(value);
+  return normalized === "cod" || normalized === "cashondelivery";
+};
+
 const normalizeOrder = (raw = {}) => {
   const items = Array.isArray(raw.items) ? raw.items : [];
   const normalizedItems = items.map((item, index) => {
@@ -677,11 +695,21 @@ const normalizeOrder = (raw = {}) => {
     .trim()
     .toLowerCase();
 
-  const paymentMethod = String(
-    raw.paymentMethod || raw.paymentMode || raw.billDetails?.paymentMethod || "cod"
+  const rawPaymentMethod =
+    raw.paymentMethod || raw.paymentMode || raw.billDetails?.paymentMethod || "cod";
+  const paymentMethod = isCodPaymentMethod(rawPaymentMethod)
+    ? "cod"
+    : String(rawPaymentMethod).trim().toLowerCase();
+
+  const scanner = raw.codScanner && typeof raw.codScanner === "object" ? raw.codScanner : {};
+  const scannerState = String(
+    scanner.state || raw.scannerLockState || raw.scannerState || "none"
   )
     .trim()
     .toLowerCase();
+  const scannerLockedAmount = Number(
+    scanner.lockedAmount ?? raw.scannerLockedAmount ?? amount
+  );
 
   return {
     ...raw,
@@ -701,7 +729,75 @@ const normalizeOrder = (raw = {}) => {
     paymentStatus,
     paymentMethod,
     paymentMode: paymentMethod,
+    scannerLockState: scannerState,
+    scannerState,
+    scannerLockedAmount,
+    scannerReference: scanner.reference || raw.scannerReference || "",
+    scannerCreatedAt: scanner.createdAt || raw.scannerCreatedAt || null,
+    scannerExpiresAt: scanner.expiresAt || raw.scannerExpiresAt || null,
+    scannerPaidAt: scanner.paidAt || raw.scannerPaidAt || null,
+    codScanner: {
+      ...scanner,
+      state: scannerState,
+      lockedAmount: scannerLockedAmount,
+    },
   };
+};
+
+const getOrderPayableAmount = (order = {}) =>
+  Number(
+    order.amount ??
+      order.total ??
+      order.totalAmount ??
+      order.grandTotal ??
+      order.payableAmount ??
+      0
+  );
+
+const getCodScannerUpiId = (order = {}) => {
+  const fromOrder = String(
+    order.codScanner?.upiId ||
+      order.codUpiId ||
+      order.upiId ||
+      order.settings?.codUpiId ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (fromOrder) return fromOrder;
+
+  const fromEnv = String(import.meta.env?.VITE_COD_UPI_ID || "")
+    .trim()
+    .toLowerCase();
+
+  return fromEnv;
+};
+
+const buildCodScannerPayload = ({ order = {}, amount, reference, upiId }) => {
+  const cleanAmount = Number(amount || 0);
+  const orderRef = String(order.orderId || order.code || order.number || order.id || "ORDER")
+    .replace(/^#/, "")
+    .trim();
+
+  if (upiId) {
+    const params = new URLSearchParams({
+      pa: upiId,
+      pn: "PureCuts",
+      am: cleanAmount.toFixed(2),
+      cu: "INR",
+      tn: `COD ${orderRef}`,
+      tr: reference,
+    });
+    return `upi://pay?${params.toString()}`;
+  }
+
+  return `PURECUTS|COD_SCANNER|${orderRef}|${cleanAmount.toFixed(2)}|${reference}`;
+};
+
+const buildScannerQrImageUrl = (payload) => {
+  const encoded = encodeURIComponent(String(payload || ""));
+  return `https://quickchart.io/qr?size=320&text=${encoded}`;
 };
 
 const resolveOrderOwnerId = (order = {}) => {
@@ -889,6 +985,128 @@ export const getOrderById = async (id) => {
 export const addOrder = (data) => addItem("orders", data);
 export const updateOrder = (id, data) => updateItem("orders", id, data);
 export const deleteOrder = (id) => deleteItem("orders", id);
+
+export const createCodOrderScanner = async (
+  orderId,
+  { forceRegenerate = false, createdBy = "admin_dashboard" } = {}
+) => {
+  const cleanId = String(orderId || "").trim();
+  if (!cleanId) throw new Error("Order id is required");
+
+  const orderRef = doc(db, "orders", cleanId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) throw new Error("Order not found");
+
+  const order = normalizeOrder({ id: snap.id, ...snap.data() });
+  if (!isCodPaymentMethod(order.paymentMethod)) {
+    throw new Error("Scanner can only be generated for COD orders");
+  }
+
+  const paymentStatus = String(order.paymentStatus || "pending").toLowerCase();
+  if (paymentStatus === "paid") {
+    throw new Error("Order is already marked as paid");
+  }
+
+  const currentScanner = order.codScanner || {};
+  const currentState = String(currentScanner.state || "none").toLowerCase();
+  const hasActiveScanner =
+    currentState === "active" &&
+    Number(currentScanner.lockedAmount || 0) > 0 &&
+    String(currentScanner.qrImageUrl || "").trim();
+
+  if (hasActiveScanner && !forceRegenerate) {
+    return currentScanner;
+  }
+
+  const lockedAmount = getOrderPayableAmount(order);
+  if (!Number.isFinite(lockedAmount) || lockedAmount <= 0) {
+    throw new Error("Order payable amount is invalid for scanner generation");
+  }
+
+  const reference = `SCN-${cleanId.slice(-6).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+  const upiId = getCodScannerUpiId(order);
+  const payload = buildCodScannerPayload({
+    order,
+    amount: lockedAmount,
+    reference,
+    upiId,
+  });
+  const scanner = {
+    version: Number(currentScanner.version || 0) + 1,
+    state: "active",
+    lockedAmount,
+    reference,
+    upiId,
+    payload,
+    qrImageUrl: buildScannerQrImageUrl(payload),
+    createdAt: new Date(),
+    expiresAt: null,
+    paidAt: null,
+    createdBy,
+  };
+
+  await updateDoc(orderRef, {
+    codScanner: scanner,
+    scannerLockState: scanner.state,
+    scannerState: scanner.state,
+    scannerLockedAmount: scanner.lockedAmount,
+    scannerReference: scanner.reference,
+    scannerCreatedAt: scanner.createdAt,
+    scannerExpiresAt: scanner.expiresAt,
+    scannerPaidAt: scanner.paidAt,
+    updatedAt: serverTimestamp(),
+  });
+
+  return scanner;
+};
+
+export const markCodOrderScannerPaid = async (
+  orderId,
+  { paymentReference = "scanner_payment", paidBy = "admin_dashboard" } = {}
+) => {
+  const cleanId = String(orderId || "").trim();
+  if (!cleanId) throw new Error("Order id is required");
+
+  const orderRef = doc(db, "orders", cleanId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) throw new Error("Order not found");
+
+  const order = normalizeOrder({ id: snap.id, ...snap.data() });
+  const scanner = order.codScanner || {};
+  const scannerState = String(scanner.state || "none").toLowerCase();
+
+  if (!isCodPaymentMethod(order.paymentMethod)) {
+    throw new Error("Only COD orders can be marked from scanner flow");
+  }
+
+  if (scannerState !== "active") {
+    throw new Error("No active scanner found for this order");
+  }
+
+  const paidAt = new Date();
+  await updateDoc(orderRef, {
+    paymentStatus: "paid",
+    codScanner: {
+      ...scanner,
+      state: "paid",
+      paidAt,
+      paymentReference: String(paymentReference || "scanner_payment").trim(),
+      paidBy,
+    },
+    scannerLockState: "paid",
+    scannerState: "paid",
+    scannerPaidAt: paidAt,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...scanner,
+    state: "paid",
+    paidAt,
+    paymentReference,
+    paidBy,
+  };
+};
 
 // ─── Notifications ───────────────────────────────────────────────────────────
 const normalizeNotification = (raw = {}) => {

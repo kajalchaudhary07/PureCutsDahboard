@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
+  MdQrCode2,
   MdDelete,
   MdReceiptLong,
   MdSearch,
 } from "react-icons/md";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import {
+  createCodOrderScanner,
   createOrderNotification,
   deleteOrder,
   getOrdersPaginated,
@@ -22,6 +24,12 @@ const ORDER_STATUS_OPTIONS = [
   "dispatched",
   "delivered",
   "cancelled",
+];
+
+const PAYMENT_STATUS_OPTIONS = [
+  "paid",
+  "unpaid",
+  "pending",
 ];
 
 const toDate = (value) => {
@@ -219,6 +227,44 @@ const getPaymentMode = (order) =>
     .trim()
     .toUpperCase();
 
+const normalizePaymentMethod = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+
+const isCodPaymentMethod = (value = "") => {
+  const normalized = normalizePaymentMethod(value);
+  return normalized === "cod" || normalized === "cashondelivery";
+};
+
+const getScannerState = (order = {}) =>
+  String(order.codScanner?.state || order.scannerLockState || "none")
+    .trim()
+    .toLowerCase();
+
+const isCodOrder = (order = {}) =>
+  isCodPaymentMethod(order.paymentMethod || order.paymentMode || "cod");
+
+const scannerBadgeClass = (state) => {
+  if (state === "paid") return "badge-green";
+  if (state === "active") return "badge-orange";
+  if (state === "expired" || state === "void") return "badge-red";
+  return "badge-gray";
+};
+
+const downloadFromUrl = async (url, filename) => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Could not fetch scanner image");
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+};
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -265,6 +311,12 @@ const invoiceHtml = (order) => {
 
   const grandTotal = amount > 0 ? amount : subtotal;
   const otherCharges = Math.max(0, grandTotal - subtotal);
+  const scanner = order.codScanner && typeof order.codScanner === "object" ? order.codScanner : null;
+  const scannerState = getScannerState(order);
+  const scannerLockedAmount = Number(
+    scanner?.lockedAmount ?? order.scannerLockedAmount ?? grandTotal
+  );
+  const hasScannerLock = scannerState !== "none" && Number.isFinite(scannerLockedAmount);
 
   const rows =
     normalizedLines.length > 0
@@ -408,6 +460,13 @@ tbody tr:last-child td{border-bottom:none}
       </div>
     </div>
 
+    ${hasScannerLock ? `<div class="card" style="margin-top:16px">
+      <h4>COD Scanner Lock</h4>
+      <div class="line">Scanner Status: <strong>${escapeHtml(scannerState.toUpperCase())}</strong></div>
+      <div class="line">Locked Amount: <strong>${formatInvoiceAmount(scannerLockedAmount)}</strong></div>
+      ${scanner?.reference ? `<div class="line">Scanner Ref: <strong>${escapeHtml(scanner.reference)}</strong></div>` : ""}
+    </div>` : ""}
+
     <div class="note">
       Thank you for your purchase. This invoice is computer generated and does not require a physical signature.
     </div>
@@ -426,6 +485,15 @@ export default function OrdersList() {
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [statusSavingId, setStatusSavingId] = useState("");
+  const [paymentSavingId, setPaymentSavingId] = useState("");
+  const [scannerSavingId, setScannerSavingId] = useState("");
+  const [paymentModal, setPaymentModal] = useState({
+    open: false,
+    order: null,
+    paidAmount: "",
+    paymentReference: "",
+    paymentMethod: "cash",
+  });
 
   const load = async ({ append = false } = {}) => {
     if (append) {
@@ -496,6 +564,18 @@ export default function OrdersList() {
           cancellationSource: "dashboard_admin",
           cancellationReason: "Cancelled by admin from dashboard",
           cancelledAt: order.cancelledAt || new Date(),
+          ...(getScannerState(order) === "active"
+            ? {
+                codScanner: {
+                  ...(order.codScanner || {}),
+                  state: "void",
+                  voidAt: new Date(),
+                  voidReason: "Order cancelled",
+                },
+                scannerLockState: "void",
+                scannerState: "void",
+              }
+            : {}),
         }
       : {
           orderStatus: nextStatus,
@@ -546,6 +626,110 @@ export default function OrdersList() {
     }
   };
 
+  const onChangePaymentStatus = async (order, nextPaymentStatus) => {
+    const normalizedNextStatus = normalizeStatus(nextPaymentStatus, "unpaid");
+
+    // Open payment details modal for pending/paid statuses
+    if (normalizedNextStatus === "pending" || normalizedNextStatus === "paid") {
+      const orderAmount = getAmount(order);
+      setPaymentModal({
+        open: true,
+        order,
+        paidAmount: normalizedNextStatus === "paid" ? String(orderAmount) : "",
+        paymentReference: "",
+        paymentMethod: "cash",
+        nextStatus: normalizedNextStatus,
+      });
+      return;
+    }
+
+    // For unpaid, update directly
+    const previous = order.paymentStatus || "unpaid";
+    const nextPatch = {
+      paymentStatus: normalizedNextStatus,
+      paymentStatusUpdatedAt: new Date(),
+      paymentStatusUpdatedBy: "admin",
+    };
+
+    setOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? { ...o, ...nextPatch } : o))
+    );
+    setPaymentSavingId(order.id);
+
+    try {
+      await updateOrder(order.id, nextPatch);
+      toast.success(`Payment status updated to ${normalizedNextStatus.toUpperCase()}`);
+    } catch {
+      setOrders((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, paymentStatus: previous } : o))
+      );
+      toast.error("Failed to update payment status");
+    } finally {
+      setPaymentSavingId("");
+    }
+  };
+
+  const onSavePaymentDetails = async () => {
+    const { order, paidAmount, paymentReference, paymentMethod, nextStatus } = paymentModal;
+
+    if (!order?.id) {
+      toast.error("Order not found");
+      return;
+    }
+
+    const paid = Number(paidAmount || 0);
+    const orderAmount = getAmount(order);
+
+    if (paid <= 0) {
+      toast.error("Please enter a valid paid amount");
+      return;
+    }
+
+    if (paid > orderAmount) {
+      toast.error(`Paid amount cannot exceed order total (₹${orderAmount.toFixed(2)})`);
+      return;
+    }
+
+    const nextPatch = {
+      paymentStatus: nextStatus,
+      paidAmount: paid,
+      paymentMethod: paymentMethod || "cash",
+      paymentReference: String(paymentReference || "").trim(),
+      paymentStatusUpdatedAt: new Date(),
+      paymentStatusUpdatedBy: "admin",
+      paymentHistory: [
+        {
+          status: nextStatus,
+          amount: paid,
+          method: paymentMethod || "cash",
+          reference: String(paymentReference || "").trim(),
+          updatedAt: new Date(),
+          updatedBy: "admin",
+        },
+        ...(Array.isArray(order.paymentHistory) ? order.paymentHistory : []),
+      ],
+    };
+
+    setOrders((prev) =>
+      prev.map((o) => (o.id === order.id ? { ...o, ...nextPatch } : o))
+    );
+    setPaymentSavingId(order.id);
+    setPaymentModal({ open: false, order: null, paidAmount: "", paymentReference: "", paymentMethod: "cash" });
+
+    try {
+      await updateOrder(order.id, nextPatch);
+      const status = nextStatus.toUpperCase();
+      toast.success(`Payment recorded - ${status} (₹${paid.toFixed(2)})`);
+    } catch {
+      setOrders((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, paymentStatus: order.paymentStatus } : o))
+      );
+      toast.error("Failed to save payment details");
+    } finally {
+      setPaymentSavingId("");
+    }
+  };
+
   const onDownloadInvoice = (order) => {
     try {
       const html = invoiceHtml(order);
@@ -561,6 +745,51 @@ export default function OrdersList() {
     }
   };
 
+  const onDownloadScanner = async (order, { regenerate = false } = {}) => {
+    if (!isCodOrder(order)) {
+      toast.info("Scanner is only available for COD orders");
+      return;
+    }
+
+    setScannerSavingId(order.id);
+    try {
+      const scanner = await createCodOrderScanner(order.id, {
+        forceRegenerate: regenerate,
+        createdBy: "admin_dashboard",
+      });
+
+      setOrders((prev) =>
+        prev.map((entry) =>
+          entry.id === order.id
+            ? {
+                ...entry,
+                codScanner: scanner,
+                scannerLockState: scanner.state,
+                scannerLockedAmount: scanner.lockedAmount,
+                scannerReference: scanner.reference,
+              }
+            : entry
+        )
+      );
+
+      const safeName = `${getOrderRef(order).replace(/[^a-z0-9_-]/gi, "")}_scanner.png`;
+      if (scanner.qrImageUrl) {
+        await downloadFromUrl(scanner.qrImageUrl, safeName);
+      } else {
+        const fallback = document.createElement("a");
+        fallback.href = `data:text/plain;charset=utf-8,${encodeURIComponent(String(scanner.payload || ""))}`;
+        fallback.download = safeName.replace(/\.png$/i, "_payload.txt");
+        fallback.click();
+      }
+
+      toast.success("Scanner downloaded");
+    } catch (error) {
+      toast.error(error?.message || "Failed to generate scanner");
+    } finally {
+      setScannerSavingId("");
+    }
+  };
+
   return (
     <>
       {deleteTarget && (
@@ -570,6 +799,109 @@ export default function OrdersList() {
           onConfirm={onDelete}
           onCancel={() => setDeleteTarget(null)}
         />
+      )}
+
+      {paymentModal.open && (
+        <div className="modal-overlay" onClick={() => setPaymentModal({ ...paymentModal, open: false })}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">Record Payment</div>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setPaymentModal({ ...paymentModal, open: false })}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ padding: 20 }}>
+              <div style={{ marginBottom: 16 }}>
+                <strong>Order:</strong> {getOrderRef(paymentModal.order || {})} | Total: ₹{formatCurrency(getAmount(paymentModal.order || {}))}
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", marginBottom: 6, fontWeight: 500 }}>
+                  Paid Amount (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={getAmount(paymentModal.order || {})}
+                  step="0.01"
+                  placeholder="Enter amount paid"
+                  value={paymentModal.paidAmount}
+                  onChange={(e) => setPaymentModal({ ...paymentModal, paidAmount: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", marginBottom: 6, fontWeight: 500 }}>
+                  Payment Method
+                </label>
+                <select
+                  value={paymentModal.paymentMethod}
+                  onChange={(e) => setPaymentModal({ ...paymentModal, paymentMethod: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    fontSize: 14,
+                  }}
+                >
+                  <option value="cash">Cash</option>
+                  <option value="check">Check</option>
+                  <option value="upi">UPI</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="card">Card</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", marginBottom: 6, fontWeight: 500 }}>
+                  Payment Reference (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Check #, Transaction ID, UPI Ref, etc."
+                  value={paymentModal.paymentReference}
+                  onChange={(e) => setPaymentModal({ ...paymentModal, paymentReference: e.target.value })}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button
+                  className="btn btn-outline"
+                  onClick={() => setPaymentModal({ ...paymentModal, open: false })}
+                  disabled={paymentSavingId === paymentModal.order?.id}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={onSavePaymentDetails}
+                  disabled={paymentSavingId === paymentModal.order?.id}
+                >
+                  {paymentSavingId === paymentModal.order?.id ? "Saving..." : "Save Payment"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="page-header">
@@ -622,6 +954,9 @@ export default function OrdersList() {
                   const paymentStatus = normalizeStatus(order.paymentStatus, "unpaid");
                   const cancellationActor = getCancellationActor(order);
                   const cancellationReason = String(order.cancellationReason || "").trim();
+                  const scannerState = getScannerState(order);
+                  const showScanner = isCodOrder(order) && paymentStatus !== "paid";
+                  const scannerBusy = scannerSavingId === order.id;
 
                   return (
                     <tr key={order.id}>
@@ -660,9 +995,40 @@ export default function OrdersList() {
                         ) : null}
                       </td>
                       <td>
-                        <span className={`badge ${paymentStatus === "paid" ? "badge-green" : "badge-gray"}`}>
-                          {paymentStatus.charAt(0).toUpperCase() + paymentStatus.slice(1)}
-                        </span>
+                        <select
+                          className="order-status-select"
+                          value={PAYMENT_STATUS_OPTIONS.includes(paymentStatus) ? paymentStatus : "unpaid"}
+                          disabled={paymentSavingId === order.id}
+                          onChange={(e) => onChangePaymentStatus(order, e.target.value)}
+                          style={{ width: "100%" }}
+                        >
+                          {PAYMENT_STATUS_OPTIONS.map((status) => (
+                            <option key={status} value={status}>
+                              {status.charAt(0).toUpperCase() + status.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                        {paymentStatus === "paid" && order.paidAmount ? (
+                          <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                            Paid: ₹{Number(order.paidAmount).toFixed(2)} | {String(order.paymentMethod || "cash").toUpperCase()}
+                          </div>
+                        ) : null}
+                        {paymentStatus === "pending" ? (
+                          <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                            Pending: ₹{(Number(order.paidAmount || 0) > 0 
+                              ? (getAmount(order) - Number(order.paidAmount || 0)).toFixed(2)
+                              : getAmount(order).toFixed(2))}
+                            {order.paymentReference ? ` | Ref: ${order.paymentReference}` : ""}
+                          </div>
+                        ) : null}
+                        {isCodOrder(order) ? (
+                          <span
+                            className={`badge ${scannerBadgeClass(scannerState)}`}
+                            style={{ marginLeft: 0, marginTop: 6, display: "block" }}
+                          >
+                            {scannerState === "none" ? "No Scanner" : `Scanner ${scannerState}`}
+                          </span>
+                        ) : null}
                       </td>
                       <td>
                         <span className="badge badge-blue">{getPaymentMode(order)}</span>
@@ -678,6 +1044,20 @@ export default function OrdersList() {
                           >
                             <MdReceiptLong />
                           </button>
+                          {showScanner ? (
+                            <button
+                              className="btn btn-outline btn-sm btn-icon"
+                              title={scannerState === "active" ? "Regenerate scanner" : "Download scanner"}
+                              disabled={scannerBusy}
+                              onClick={() =>
+                                onDownloadScanner(order, {
+                                  regenerate: scannerState === "active",
+                                })
+                              }
+                            >
+                              <MdQrCode2 />
+                            </button>
+                          ) : null}
                           <button
                             className="btn btn-danger btn-sm btn-icon"
                             title="Delete order"

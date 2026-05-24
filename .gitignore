@@ -6,5 +6,6 @@ dist/
 # Firebase / Google service account credentials (secrets)
 purecuts-11a7c-firebase-adminsdk-fbsvc-1bd001457f.json
 serviceAccountKey.json
+setAdmin.js
 *.service-account.json
 *firebase-adminsdk*.json
