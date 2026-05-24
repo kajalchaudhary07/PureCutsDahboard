@@ -19,7 +19,8 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { db, functions } from "./firebaseConfig";
+import { getDownloadURL, deleteObject, ref, uploadBytesResumable } from "firebase/storage";
+import { db, functions, storage } from "./firebaseConfig";
 
 // ─── Generic helpers ───────────────────────────────────────────────────────────
 
@@ -273,6 +274,146 @@ export const deleteBanner = (id) => deleteItem("banners", id);
 
 export const toggleBannerStatus = (id, active) =>
   updateBanner(id, { active: !Boolean(active) });
+
+// ─── Product Suggestions ────────────────────────────────────────────────────
+const normalizeProductSuggestion = (raw = {}) => {
+  const status = String(raw.status || "submitted").trim().toLowerCase();
+
+  return {
+    ...raw,
+    text: String(raw.text || "").trim(),
+    imageUrl: String(raw.imageUrl || raw.image || "").trim(),
+    imagePath: String(raw.imagePath || "").trim(),
+    uid: String(raw.uid || raw.userId || "").trim(),
+    orderRef: String(raw.orderRef || raw.orderId || raw.orderNumber || "").trim(),
+    orderId: String(raw.orderId || raw.orderRef || raw.orderNumber || "").trim(),
+    status,
+    adminNotes: String(raw.adminNotes || "").trim(),
+  };
+};
+
+export const getProductSuggestionsPaginated = async ({
+  pageSize = DEFAULT_PAGE_SIZE,
+  cursor = null,
+} = {}) => {
+  const pageLimit = clampPageSize(pageSize);
+
+  if (cursor?.__fallbackOffset !== undefined) {
+    const allRows = await getDocs(collection(db, "productSuggestions"));
+    const rows = allRows.docs
+      .map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillisSafe(b.createdAt || b.updatedAt) - toMillisSafe(a.createdAt || a.updatedAt));
+    const offset = Number(cursor.__fallbackOffset || 0);
+    const pageRows = rows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + pageRows.length;
+    return {
+      rows: pageRows,
+      nextCursor: nextOffset < rows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < rows.length,
+    };
+  }
+
+  let builtQuery = query(
+    collection(db, "productSuggestions"),
+    orderBy("createdAt", "desc"),
+    limit(pageLimit)
+  );
+
+  if (cursor) {
+    builtQuery = query(
+      collection(db, "productSuggestions"),
+      orderBy("createdAt", "desc"),
+      startAfter(cursor),
+      limit(pageLimit)
+    );
+  }
+
+  try {
+    const snap = await getDocs(builtQuery);
+    return {
+      rows: snap.docs.map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() })),
+      nextCursor: snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null,
+      hasMore: snap.docs.length === pageLimit,
+    };
+  } catch {
+    const snap = await getDocs(collection(db, "productSuggestions"));
+    const rows = snap.docs
+      .map((d) => normalizeProductSuggestion({ id: d.id, ...d.data() }))
+      .sort((a, b) => toMillisSafe(b.createdAt || b.updatedAt) - toMillisSafe(a.createdAt || a.updatedAt));
+    const offset = Number(cursor?.__fallbackOffset || 0);
+    const pageRows = rows.slice(offset, offset + pageLimit);
+    const nextOffset = offset + pageRows.length;
+    return {
+      rows: pageRows,
+      nextCursor: nextOffset < rows.length ? { __fallbackOffset: nextOffset } : null,
+      hasMore: nextOffset < rows.length,
+    };
+  }
+};
+
+export const getProductSuggestionById = async (id) => {
+  const cleanId = String(id || "").trim();
+  if (!cleanId) return null;
+  const snap = await getDoc(doc(db, "productSuggestions", cleanId));
+  if (!snap.exists()) return null;
+  return normalizeProductSuggestion({ id: snap.id, ...snap.data() });
+};
+
+export const uploadProductSuggestionImage = async ({ uid, file, onProgress }) => {
+  const cleanUid = String(uid || "").trim();
+  if (!cleanUid) throw new Error("uid is required");
+  if (!file) throw new Error("file is required");
+
+  const lower = String(file.name || "").toLowerCase();
+  if (!lower.match(/\.(png|jpe?g|webp|gif)$/)) {
+    throw new Error("Only image files are supported");
+  }
+
+  const safeName = String(file.name || "suggestion")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "");
+  const path = `productSuggestions/${cleanUid}/${Date.now()}_${safeName}`;
+  const storageRef = ref(storage, path);
+
+  return await new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(storageRef, file, {
+      contentType: file.type || "image/jpeg",
+      cacheControl: "public,max-age=31536000,immutable",
+    });
+    task.on(
+      "state_changed",
+      (snap) => {
+        if (typeof onProgress === "function" && snap.totalBytes > 0) {
+          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+        }
+      },
+      reject,
+      () => getDownloadURL(task.snapshot.ref).then((downloadUrl) => resolve({ imageUrl: downloadUrl, imagePath: path })).catch(reject)
+    );
+  });
+};
+
+export const addProductSuggestion = async (data) => {
+  const payload = normalizeProductSuggestion({
+    ...data,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  const refDoc = await addDoc(collection(db, "productSuggestions"), payload);
+  return refDoc;
+};
+
+export const updateProductSuggestion = async (id, data) => {
+  return await updateItem("productSuggestions", id, normalizeProductSuggestion(data));
+};
+
+export const deleteProductSuggestion = async (id) => deleteItem("productSuggestions", id);
+
+export const deleteProductSuggestionImage = async (imagePath) => {
+  const path = String(imagePath || "").trim();
+  if (!path) return;
+  await deleteObject(ref(storage, path));
+};
 
 // ─── Product Reviews ──────────────────────────────────────────────────────────
 const REVIEW_COLLECTIONS = ["productReviews", "reviews"];
@@ -687,7 +828,7 @@ const normalizeOrder = (raw = {}) => {
     raw.amount ?? raw.total ?? raw.totalAmount ?? raw.grandTotal ?? raw.payableAmount ?? 0
   );
 
-  const orderStatus = String(raw.orderStatus || raw.status || "placed")
+  const rawOrderStatus = String(raw.orderStatus || raw.status || "placed")
     .trim()
     .toLowerCase();
 
@@ -711,6 +852,23 @@ const normalizeOrder = (raw = {}) => {
     scanner.lockedAmount ?? raw.scannerLockedAmount ?? amount
   );
 
+  const editMeta = raw.editMeta && typeof raw.editMeta === "object"
+    ? {
+        ...raw.editMeta,
+        isEditOrder: raw.editMeta.isEditOrder === true,
+      }
+    : null;
+
+  const isEditOrder =
+    raw.isEditOrder === true ||
+    Boolean(editMeta) ||
+    String(raw.originalOrderRef || raw.originalOrderId || raw.originalOrderDocumentId || "")
+      .trim()
+      .length > 0;
+
+  const orderStatus =
+    rawOrderStatus === "placed" && isEditOrder ? "edited" : rawOrderStatus;
+
   return {
     ...raw,
     items: normalizedItems,
@@ -729,75 +887,70 @@ const normalizeOrder = (raw = {}) => {
     paymentStatus,
     paymentMethod,
     paymentMode: paymentMethod,
-    scannerLockState: scannerState,
-    scannerState,
-    scannerLockedAmount,
-    scannerReference: scanner.reference || raw.scannerReference || "",
-    scannerCreatedAt: scanner.createdAt || raw.scannerCreatedAt || null,
-    scannerExpiresAt: scanner.expiresAt || raw.scannerExpiresAt || null,
-    scannerPaidAt: scanner.paidAt || raw.scannerPaidAt || null,
-    codScanner: {
-      ...scanner,
-      state: scannerState,
-      lockedAmount: scannerLockedAmount,
-    },
+    editMeta,
+    isEditOrder,
   };
 };
 
-const getOrderPayableAmount = (order = {}) =>
-  Number(
-    order.amount ??
-      order.total ??
-      order.totalAmount ??
-      order.grandTotal ??
-      order.payableAmount ??
-      0
-  );
+const dedupeOrdersByOrderRef = (orders = []) => {
+  const scoreOrderPreference = (order = {}) => {
+    const isEditDoc = Boolean(
+      order.isEditOrder ||
+      order.editMeta ||
+      order.originalOrderRef ||
+      order.originalOrderId ||
+      order.originalOrderDocumentId
+    );
+    const isSourceMarkedEdited = Boolean(
+      order.editedByOrderDocumentId || order.editedByOrderId
+    );
+    const itemsCount = Array.isArray(order.items) ? order.items.length : 0;
 
-const getCodScannerUpiId = (order = {}) => {
-  const fromOrder = String(
-    order.codScanner?.upiId ||
-      order.codUpiId ||
-      order.upiId ||
-      order.settings?.codUpiId ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
+    return (
+      (isEditDoc ? 1000 : 0) +
+      (isSourceMarkedEdited ? -400 : 0) +
+      itemsCount
+    );
+  };
 
-  if (fromOrder) return fromOrder;
+  const byRef = new Map();
+  const loose = [];
 
-  const fromEnv = String(import.meta.env?.VITE_COD_UPI_ID || "")
-    .trim()
-    .toLowerCase();
+  for (const order of orders) {
+    const ref = String(order.orderRef || order.orderId || order.orderNumber || "").trim();
+    if (!ref) {
+      loose.push(order);
+      continue;
+    }
 
-  return fromEnv;
-};
+    const existing = byRef.get(ref);
+    if (!existing) {
+      byRef.set(ref, order);
+      continue;
+    }
 
-const buildCodScannerPayload = ({ order = {}, amount, reference, upiId }) => {
-  const cleanAmount = Number(amount || 0);
-  const orderRef = String(order.orderId || order.code || order.number || order.id || "ORDER")
-    .replace(/^#/, "")
-    .trim();
+    const existingScore = scoreOrderPreference(existing);
+    const incomingScore = scoreOrderPreference(order);
+    if (incomingScore > existingScore) {
+      byRef.set(ref, order);
+      continue;
+    }
+    if (incomingScore < existingScore) {
+      continue;
+    }
 
-  if (upiId) {
-    const params = new URLSearchParams({
-      pa: upiId,
-      pn: "PureCuts",
-      am: cleanAmount.toFixed(2),
-      cu: "INR",
-      tn: `COD ${orderRef}`,
-      tr: reference,
-    });
-    return `upi://pay?${params.toString()}`;
+    const existingTs = toMillisSafe(existing.updatedAt || existing.createdAt);
+    const incomingTs = toMillisSafe(order.updatedAt || order.createdAt);
+    if (incomingTs >= existingTs) {
+      byRef.set(ref, order);
+    }
   }
 
-  return `PURECUTS|COD_SCANNER|${orderRef}|${cleanAmount.toFixed(2)}|${reference}`;
-};
-
-const buildScannerQrImageUrl = (payload) => {
-  const encoded = encodeURIComponent(String(payload || ""));
-  return `https://quickchart.io/qr?size=320&text=${encoded}`;
+  return [...byRef.values(), ...loose].sort(
+    (a, b) =>
+      toMillisSafe(b.createdAt || b.updatedAt) -
+      toMillisSafe(a.createdAt || a.updatedAt)
+  );
 };
 
 const resolveOrderOwnerId = (order = {}) => {
@@ -846,7 +999,7 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
 
   const userMap = Object.fromEntries(userEntries);
 
-  return orders.map((order) => {
+  const normalized = orders.map((order) => {
     const ownerId = resolveOrderOwnerId(order);
     const profile = userMap[ownerId] || {};
 
@@ -923,6 +1076,8 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
 
     return normalizeOrder(enriched);
   });
+
+  return dedupeOrdersByOrderRef(normalized);
 };
 
 export const getOrdersPaginated = async ({ pageSize = DEFAULT_PAGE_SIZE, cursor = null } = {}) => {
@@ -1788,6 +1943,7 @@ const isPendingOrderStatus = (value) => {
     "canceled",
     "refunded",
     "failed",
+    "edited",
   ].includes(status);
 };
 

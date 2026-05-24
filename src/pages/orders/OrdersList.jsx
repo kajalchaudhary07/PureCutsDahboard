@@ -23,6 +23,7 @@ const ORDER_STATUS_OPTIONS = [
   "packed",
   "dispatched",
   "delivered",
+  "edited",
   "cancelled",
 ];
 

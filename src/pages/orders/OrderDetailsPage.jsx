@@ -145,125 +145,44 @@ const getPaymentMode = (order = {}) =>
     .trim()
     .toUpperCase();
 
-const normalizePaymentMethod = (value = "") =>
-  String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "");
+const isEditedOrder = (order = {}) => Boolean(
+  order.isEditOrder || order.editMeta || order.originalOrderRef || order.originalOrderId
+);
 
-const isCodPaymentMethod = (value = "") => {
-  const normalized = normalizePaymentMethod(value);
-  return normalized === "cod" || normalized === "cashondelivery";
+const getLockedQuantities = (order = {}) => {
+  const editMeta = order.editMeta;
+  const raw = editMeta && typeof editMeta === "object" ? editMeta.lockedQuantities : null;
+  if (!raw || typeof raw !== "object") return {};
+
+  return Object.entries(raw).reduce((acc, [key, value]) => {
+    const qty = Number(value || 0);
+    if (key && Number.isFinite(qty) && qty > 0) {
+      acc[key] = qty;
+    }
+    return acc;
+  }, {});
 };
 
-const getScannerState = (order = {}) =>
-  String(order.codScanner?.state || order.scannerLockState || "none")
-    .trim()
-    .toLowerCase();
-
-const isCodOrder = (order = {}) =>
-  isCodPaymentMethod(order.paymentMethod || order.paymentMode || "cod");
-
-const scannerBadgeClass = (state) => {
-  if (state === "paid") return "badge-green";
-  if (state === "active") return "badge-orange";
-  if (state === "expired" || state === "void") return "badge-red";
-  return "badge-gray";
-};
-
-const COMPANY_SCANNER_URL = String(import.meta.env?.VITE_COMPANY_SCANNER_URL || "").trim();
-
-const buildCompanyScannerUrl = ({ scanner, order }) => {
-  const base = COMPANY_SCANNER_URL;
-  if (!base) return "";
-
-  const url = new URL(base, window.location.origin);
-  const lockedAmount = Number(
-    scanner?.lockedAmount ??
-      order?.scannerLockedAmount ??
-      order?.amount ??
-      order?.total ??
-      order?.totalAmount ??
-      order?.grandTotal ??
-      order?.payableAmount ??
-      0
-  );
-
-  url.searchParams.set("orderId", String(order?.id || ""));
-  url.searchParams.set(
-    "orderRef",
-    String(order?.orderId || order?.code || order?.number || order?.id || "")
-  );
-  url.searchParams.set("amount", String(Number.isFinite(lockedAmount) ? lockedAmount : 0));
-  if (scanner?.reference) url.searchParams.set("scannerRef", String(scanner.reference));
-  if (scanner?.payload) url.searchParams.set("payload", String(scanner.payload));
-  if (scanner?.upiId) url.searchParams.set("upiId", String(scanner.upiId));
-  if (scanner?.qrImageUrl) url.searchParams.set("qrImageUrl", String(scanner.qrImageUrl));
-
-  return url.toString();
-};
-
-const escapeHtml = (value) =>
-  String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const invoiceHtml = (order = {}) => {
-  const orderRef = getOrderRef(order);
-  const customer = getCustomer(order);
-  const amount = getAmount(order);
+const getCombinedItemsTotal = (order = {}) => {
   const items = getItems(order);
-  const created = formatDateTime(order.createdAt || order.orderDate || order.date);
+  return items.reduce((sum, item) => {
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+    const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+    return sum + qty * unitPrice;
+  }, 0);
+};
 
-  const rows =
-    items.length > 0
-      ? items
-          .map((item, idx) => {
-            const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
-            const unit = Number(item.price ?? item.unitPrice ?? 0) || 0;
-            const total = qty * unit;
-            return `<tr>
-<td>${idx + 1}</td>
-<td>${escapeHtml(item.name || item.title || `Item ${idx + 1}`)}</td>
-<td>${qty}</td>
-<td>${formatCurrency(unit)}</td>
-<td>${formatCurrency(total)}</td>
-</tr>`;
-          })
-          .join("")
-      : `<tr><td>1</td><td>Order Total</td><td>1</td><td>${formatCurrency(amount)}</td><td>${formatCurrency(amount)}</td></tr>`;
-
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>Invoice ${escapeHtml(orderRef)}</title>
-<style>
-body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; font-size: 12px; }
-th { background: #f8fafc; }
-.meta { margin-bottom: 12px; line-height: 1.6; }
-</style>
-</head>
-<body>
-<h2>PureCuts Invoice</h2>
-<div class="meta">
-  <div><strong>Order:</strong> ${escapeHtml(orderRef)}</div>
-  <div><strong>Date:</strong> ${escapeHtml(created)}</div>
-  <div><strong>Customer:</strong> ${escapeHtml(customer.name)}</div>
-  <div><strong>Email:</strong> ${escapeHtml(customer.email)}</div>
-  <div><strong>Total:</strong> ${escapeHtml(formatCurrency(amount))}</div>
-</div>
-<table>
-  <thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
-  <tbody>${rows}</tbody>
-</table>
-</body>
-</html>`;
+const getChargeableItemsTotal = (order = {}) => {
+  const items = getItems(order);
+  const locked = getLockedQuantities(order);
+  return items.reduce((sum, item) => {
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+    const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+    const productId = String(item.productId || item.id || "").trim();
+    const lockedQty = locked[productId] || 0;
+    const chargeableQty = qty > lockedQty ? qty - lockedQty : 0;
+    return sum + chargeableQty * unitPrice;
+  }, 0);
 };
 
 export default function OrderDetailsPage() {
@@ -352,207 +271,15 @@ export default function OrderDetailsPage() {
   const addressLines = getAddressLines(order || {});
   const items = getItems(order || {});
   const orderAmount = getAmount(order || {});
+  const combinedItemsTotal = getCombinedItemsTotal(order || {});
+  const chargeableItemsTotal = getChargeableItemsTotal(order || {});
+  const totalToDisplay = isEditedOrder(order || {})
+    ? (combinedItemsTotal > 0 ? combinedItemsTotal : orderAmount)
+    : orderAmount;
   const orderStatus = normalizeStatus(order?.orderStatus || order?.status, "placed");
   const paymentStatus = normalizeStatus(order?.paymentStatus, "pending");
-  const scannerState = getScannerState(order || {});
-  const scanner = order?.codScanner && typeof order.codScanner === "object" ? order.codScanner : null;
-  const scannerLockedAmount = Number(
-    scanner?.lockedAmount ?? order?.scannerLockedAmount ?? orderAmount
-  );
-  const showScannerActions = Boolean(order) && isCodOrder(order) && paymentStatus !== "paid";
-
-  const openScannerInDashboard = (scannerData) => {
-    const scannerUrl = buildCompanyScannerUrl({
-      scanner: scannerData,
-      order,
-    });
-
-    setScannerViewer({
-      open: true,
-      url: scannerUrl,
-      scanner: scannerData || null,
-    });
-  };
-
-  const handleGenerateScanner = async (forceRegenerate = false) => {
-    if (!order?.id) return;
-    if (!isCodOrder(order)) {
-      toast.info("Scanner is only available for COD orders");
-      return;
-    }
-
-    setScannerBusy(true);
-    try {
-      const createdScanner = await createCodOrderScanner(order.id, {
-        forceRegenerate,
-        createdBy: "admin_dashboard",
-      });
-      openScannerInDashboard(createdScanner);
-      await loadOrderDetails(order.id);
-      toast.success(forceRegenerate ? "Scanner regenerated and opened" : "Scanner generated and opened");
-    } catch (error) {
-      toast.error(error?.message || "Failed to generate scanner");
-    } finally {
-      setScannerBusy(false);
-    }
-  };
-
-  const handleDownloadScanner = async () => {
-    if (!order?.id) return;
-
-    setScannerBusy(true);
-    try {
-      const nextScanner =
-        scannerState === "active" && scanner?.qrImageUrl
-          ? scanner
-          : await createCodOrderScanner(order.id, {
-              forceRegenerate: false,
-              createdBy: "admin_dashboard",
-            });
-
-      openScannerInDashboard(nextScanner);
-
-      await loadOrderDetails(order.id);
-      toast.success("Scanner opened in dashboard");
-    } catch (error) {
-      toast.error(error?.message || "Failed to open scanner");
-    } finally {
-      setScannerBusy(false);
-    }
-  };
-
-  const handleMarkPaid = async () => {
-    if (!order?.id) return;
-
-    setScannerBusy(true);
-    try {
-      await markCodOrderScannerPaid(order.id, {
-        paymentReference: `dashboard-${Date.now()}`,
-        paidBy: "admin_dashboard",
-      });
-      await loadOrderDetails(order.id);
-      toast.success("Scanner payment marked as paid");
-    } catch (error) {
-      toast.error(error?.message || "Failed to mark scanner payment");
-    } finally {
-      setScannerBusy(false);
-    }
-  };
-
-  const handleDownloadInvoice = () => {
-    if (!order) return;
-
-    try {
-      const html = invoiceHtml(order);
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${getOrderRef(order).replace(/[^a-z0-9_-]/gi, "")}_invoice.html`;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Failed to download invoice");
-    }
-  };
-
-  const onChangePaymentStatus = async (nextPaymentStatus) => {
-    if (!order?.id) return;
-
-    const normalizedNextStatus = normalizeStatus(nextPaymentStatus, "unpaid");
-
-    // Open payment details modal for pending/paid statuses
-    if (normalizedNextStatus === "pending" || normalizedNextStatus === "paid") {
-      setPaymentModal({
-        open: true,
-        paidAmount: normalizedNextStatus === "paid" ? String(orderAmount) : "",
-        paymentReference: "",
-        paymentMethod: "cash",
-        nextStatus: normalizedNextStatus,
-      });
-      return;
-    }
-
-    // For unpaid, update directly
-    const previous = order.paymentStatus || "unpaid";
-    const nextPatch = {
-      paymentStatus: normalizedNextStatus,
-      paymentStatusUpdatedAt: new Date(),
-      paymentStatusUpdatedBy: "admin",
-    };
-
-    setOrder((prev) => (prev ? { ...prev, ...nextPatch } : null));
-    setPaymentSavingId(order.id);
-
-    try {
-      await updateOrder(order.id, nextPatch);
-      toast.success(`Payment status updated to ${normalizedNextStatus.toUpperCase()}`);
-    } catch {
-      setOrder((prev) =>
-        prev ? { ...prev, paymentStatus: previous } : null
-      );
-      toast.error("Failed to update payment status");
-    } finally {
-      setPaymentSavingId("");
-    }
-  };
-
-  const onSavePaymentDetails = async () => {
-    if (!order?.id) {
-      toast.error("Order not found");
-      return;
-    }
-
-    const { paidAmount, paymentReference, paymentMethod, nextStatus } = paymentModal;
-    const paid = Number(paidAmount || 0);
-
-    if (paid <= 0) {
-      toast.error("Please enter a valid paid amount");
-      return;
-    }
-
-    if (paid > orderAmount) {
-      toast.error(`Paid amount cannot exceed order total (₹${orderAmount.toFixed(2)})`);
-      return;
-    }
-
-    const nextPatch = {
-      paymentStatus: nextStatus,
-      paidAmount: paid,
-      paymentMethod: paymentMethod || "cash",
-      paymentReference: String(paymentReference || "").trim(),
-      paymentStatusUpdatedAt: new Date(),
-      paymentStatusUpdatedBy: "admin",
-      paymentHistory: [
-        {
-          status: nextStatus,
-          amount: paid,
-          method: paymentMethod || "cash",
-          reference: String(paymentReference || "").trim(),
-          updatedAt: new Date(),
-          updatedBy: "admin",
-        },
-        ...(Array.isArray(order.paymentHistory) ? order.paymentHistory : []),
-      ],
-    };
-
-    setOrder((prev) => (prev ? { ...prev, ...nextPatch } : null));
-    setPaymentSavingId(order.id);
-    setPaymentModal({ open: false, paidAmount: "", paymentReference: "", paymentMethod: "cash" });
-
-    try {
-      await updateOrder(order.id, nextPatch);
-      const status = nextStatus.toUpperCase();
-      toast.success(`Payment recorded - ${status} (₹${paid.toFixed(2)})`);
-    } catch {
-      setOrder((prev) =>
-        prev ? { ...prev, paymentStatus: order.paymentStatus } : null
-      );
-      toast.error("Failed to save payment details");
-    } finally {
-      setPaymentSavingId("");
-    }
-  };
+  const editSourceRef = order?.originalOrderRef || order?.originalOrderId || order?.editMeta?.sourceOrderRef || order?.editMeta?.sourceOrderId || "";
+  const lockedQuantities = getLockedQuantities(order || {});
 
   return (
     <>
@@ -800,6 +527,18 @@ export default function OrderDetailsPage() {
               </div>
 
               <div className="order-details-grid">
+                {isEditedOrder(order) ? (
+                  <div className="order-detail-box full" style={{ background: "#FAF5FF", borderColor: "#E9D5FF" }}>
+                    <h4>Edited Order</h4>
+                    <p>
+                      This order was placed as an edit of <strong>{editSourceRef || "the previous order"}</strong>.
+                    </p>
+                    <p>
+                      Original order remains saved and the new order is tracked separately.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="order-detail-box">
                   <h4>Customer</h4>
                   <p><strong>{customer.name}</strong></p>
@@ -811,6 +550,9 @@ export default function OrderDetailsPage() {
                   <h4>Status</h4>
                   <p>
                     Order: <span className="badge badge-blue">{orderStatus.toUpperCase()}</span>
+                    {isEditedOrder(order) ? (
+                      <span className="badge" style={{ marginLeft: 8, background: "#f3e8ff", color: "#6d28d9" }}>EDITED</span>
+                    ) : null}
                   </p>
                   <p>
                     Payment Status:
@@ -852,7 +594,12 @@ export default function OrderDetailsPage() {
                   <p>
                     Payment Mode: <strong>{getPaymentMode(order)}</strong>
                   </p>
-                  <p>Total: <strong>{formatCurrency(orderAmount)}</strong></p>
+                  <p>Total: <strong>{formatCurrency(totalToDisplay)}</strong></p>
+                  {isEditedOrder(order) ? (
+                    <p className="text-muted" style={{ fontSize: 12 }}>
+                      Add-on charged: <strong>{formatCurrency(chargeableItemsTotal)}</strong>
+                    </p>
+                  ) : null}
                 </div>
 
                 {Array.isArray(order.paymentHistory) && order.paymentHistory.length > 0 ? (
@@ -1008,16 +755,27 @@ export default function OrderDetailsPage() {
                       items.map((item, idx) => {
                         const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
                         const unitPrice = Number(item.price ?? item.unitPrice ?? 0) || 0;
+                        const productId = String(item.productId || item.id || "").trim();
+                        const lockedQty = lockedQuantities[productId] || 0;
+                        const chargeableQty = qty > lockedQty ? qty - lockedQty : 0;
                         const lineTotal = qty * unitPrice;
+                        const chargeableLineTotal = chargeableQty * unitPrice;
 
                         return (
                           <tr key={item.orderItemId || `${item.productId || item.id || "item"}-${idx}`}>
                             <td className="text-muted">{idx + 1}</td>
                             <td>{item.name || item.title || `Item ${idx + 1}`}</td>
                             <td className="text-muted">{item.productId || item.id || "—"}</td>
-                            <td>{qty}</td>
+                            <td>{lockedQty > 0 ? `${qty} (+${lockedQty} previous)` : qty}</td>
                             <td>{formatCurrency(unitPrice)}</td>
-                            <td className="font-medium">{formatCurrency(lineTotal)}</td>
+                            <td className="font-medium">
+                              {formatCurrency(lineTotal)}
+                              {lockedQty > 0 ? (
+                                <div className="text-muted" style={{ fontSize: 11 }}>
+                                  Charged now: {formatCurrency(chargeableLineTotal)}
+                                </div>
+                              ) : null}
+                            </td>
                           </tr>
                         );
                       })
