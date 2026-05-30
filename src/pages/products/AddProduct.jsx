@@ -675,6 +675,20 @@ export default function AddProduct() {
     return uploadFileToPath(`products/${Date.now()}_${pendingFile.name}`, pendingFile, setUploadProgress);
   };
 
+  const deleteOldImage = async (imageUrl) => {
+    if (!imageUrl || typeof imageUrl !== "string") return;
+    try {
+      const objectPath = getStoragePathFromUrl(imageUrl);
+      if (objectPath && objectPath.startsWith("products/")) {
+        await withFirebaseRetry(() => deleteObject(ref(storage, objectPath)), {
+          context: `deleteOldImage:${objectPath}`,
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to delete old image:", err);
+    }
+  };
+
   const uploadAdditionalImages = async () => {
     if (!additionalImageFiles.length) return [];
 
@@ -1164,8 +1178,31 @@ export default function AddProduct() {
 
       const pendingThumbnailFile = imageFile || fileRef.current?.files?.[0] || null;
       const hasPendingThumbnailFile = Boolean(pendingThumbnailFile);
+      
+      // Delete old thumbnail image when editing and changing the image
+      if (isEdit && hasPendingThumbnailFile && form.image) {
+        await deleteOldImage(form.image);
+      }
+      
       const imageUrl = await uploadImage(pendingThumbnailFile);
       const additionalUrls = await uploadAdditionalImages();
+      
+      // Delete additional images that were removed during editing
+      if (isEdit) {
+        const oldAdditionalImages = form.additionalImages || [];
+        const newAdditionalImages = additionalImageFiles.map((item) => item.file?.name || "");
+        const keptImages = new Set([
+          ...oldAdditionalImages.filter((url) => {
+            const path = getStoragePathFromUrl(url);
+            return newAdditionalImages.some((name) => path.includes(name));
+          }),
+          ...additionalUrls,
+        ]);
+        
+        const imagesToDelete = oldAdditionalImages.filter((url) => !keptImages.has(url));
+        await Promise.all(imagesToDelete.map(deleteOldImage));
+      }
+      
       const descriptionMediaUrls = await uploadDescriptionMedia();
       const shortMediaUrls = await uploadShortDescriptionMedia();
       const mergedAdditionalImages = [...(form.additionalImages || []), ...additionalUrls];
