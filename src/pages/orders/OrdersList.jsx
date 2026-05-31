@@ -485,6 +485,9 @@ export default function OrdersList() {
   const [hasMore, setHasMore] = useState(false);
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [selectedOrders, setSelectedOrders] = useState([]);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [deletingMultiple, setDeletingMultiple] = useState(false);
   const [statusSavingId, setStatusSavingId] = useState("");
   const [paymentSavingId, setPaymentSavingId] = useState("");
   const [scannerSavingId, setScannerSavingId] = useState("");
@@ -536,10 +539,42 @@ export default function OrdersList() {
       return (
         getOrderRef(order).toLowerCase().includes(q) ||
         customer.name.toLowerCase().includes(q) ||
-        customer.email.toLowerCase().includes(q)
+        customer.email.toLowerCase().includes(q) ||
+        customer.phone.toLowerCase().includes(q)
       );
     });
   }, [orders, search]);
+
+  // Clear selection when search changes
+  useEffect(() => {
+    setSelectedOrders([]);
+  }, [search]);
+
+  const toggleOrderSelection = (orderId) => {
+    setSelectedOrders((prev) => {
+      if (prev.includes(orderId)) {
+        return prev.filter((id) => id !== orderId);
+      } else {
+        return [...prev, orderId];
+      }
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const filteredIds = filtered.map((order) => order.id);
+    const allSelected = filteredIds.length > 0 && filteredIds.every((id) => selectedOrders.includes(id));
+    
+    if (allSelected) {
+      // Deselect all visible orders
+      setSelectedOrders((prev) => prev.filter((id) => !filteredIds.includes(id)));
+    } else {
+      // Select all visible orders (add to existing selections)
+      setSelectedOrders((prev) => {
+        const newIds = filteredIds.filter((id) => !prev.includes(id));
+        return [...prev, ...newIds];
+      });
+    }
+  };
 
   const onDelete = async () => {
     if (!deleteTarget) return;
@@ -550,6 +585,40 @@ export default function OrdersList() {
       load({ append: false });
     } catch {
       toast.error("Failed to delete order");
+    }
+  };
+
+  const onDeleteMultiple = async () => {
+    if (selectedOrders.length === 0) return;
+    
+    setDeletingMultiple(true);
+    try {
+      let deleted = 0;
+      let failed = 0;
+
+      for (const orderId of selectedOrders) {
+        try {
+          await deleteOrder(orderId);
+          deleted++;
+        } catch {
+          failed++;
+        }
+      }
+
+      if (deleted > 0) {
+        toast.success(`${deleted} order${deleted > 1 ? "s" : ""} deleted`);
+      }
+      if (failed > 0) {
+        toast.error(`Failed to delete ${failed} order${failed > 1 ? "s" : ""}`);
+      }
+
+      setSelectedOrders([]);
+      setShowBulkDeleteDialog(false);
+      load({ append: false });
+    } catch {
+      toast.error("Failed to delete orders");
+    } finally {
+      setDeletingMultiple(false);
     }
   };
 
@@ -802,6 +871,16 @@ export default function OrdersList() {
         />
       )}
 
+      {showBulkDeleteDialog && selectedOrders.length > 0 && (
+        <ConfirmDialog
+          title={`Delete ${selectedOrders.length} Order${selectedOrders.length > 1 ? "s" : ""}?`}
+          message={`${selectedOrders.length} order${selectedOrders.length > 1 ? "s" : ""} will be permanently removed.`}
+          onConfirm={onDeleteMultiple}
+          onCancel={() => setShowBulkDeleteDialog(false)}
+          isLoading={deletingMultiple}
+        />
+      )}
+
       {paymentModal.open && (
         <div className="modal-overlay" onClick={() => setPaymentModal({ ...paymentModal, open: false })}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -922,6 +1001,38 @@ export default function OrdersList() {
         />
       </div>
 
+      {selectedOrders.length > 0 && (
+        <div style={{
+          marginBottom: 16,
+          padding: 12,
+          backgroundColor: "var(--color-info-light)",
+          border: "1px solid var(--color-info)",
+          borderRadius: 6,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}>
+          <span style={{ fontWeight: 500 }}>
+            {selectedOrders.length} order{selectedOrders.length > 1 ? "s" : ""} selected
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => setSelectedOrders([])}
+            >
+              Clear Selection
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={() => setShowBulkDeleteDialog(true)}
+              disabled={deletingMultiple}
+            >
+              {deletingMultiple ? "Deleting..." : "Delete Selected"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         {loading ? (
           <div className="spinner-wrap"><div className="spinner" /></div>
@@ -935,7 +1046,12 @@ export default function OrdersList() {
             <table>
               <thead>
                 <tr>
-                  <th><input type="checkbox" aria-label="select all" /></th>
+                  <th><input 
+                    type="checkbox" 
+                    aria-label="select all"
+                    checked={filtered.length > 0 && filtered.every((order) => selectedOrders.includes(order.id))}
+                    onChange={toggleSelectAll}
+                  /></th>
                   <th>Ser</th>
                   <th>Order ID</th>
                   <th>Customer</th>
@@ -961,7 +1077,12 @@ export default function OrdersList() {
 
                   return (
                     <tr key={order.id}>
-                      <td><input type="checkbox" aria-label={`select ${idx + 1}`} /></td>
+                      <td><input 
+                        type="checkbox"
+                        aria-label={`select ${idx + 1}`}
+                        checked={selectedOrders.includes(order.id)}
+                        onChange={() => toggleOrderSelection(order.id)}
+                      /></td>
                       <td className="text-muted">{idx + 1}</td>
                       <td>
                         <Link to={`/order-details/${order.id}`} className="order-link">
