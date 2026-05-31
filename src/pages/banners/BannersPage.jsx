@@ -71,29 +71,31 @@ export default function BannersPage() {
     load();
   }, []);
 
-  const handleMediaFileChange = (event) => {
-      // Handle paste event for images/videos
-      const handlePaste = (event) => {
-        if (!event.clipboardData) return;
-        const items = event.clipboardData.items;
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          if (item.kind === "file" && (item.type.startsWith("image/") || item.type.startsWith("video/"))) {
-            const file = item.getAsFile();
-            if (file) {
-              if (mediaPreview?.startsWith("blob:")) {
-                URL.revokeObjectURL(mediaPreview);
-              }
-              setMediaFile(file);
-              setMediaType(file.type.startsWith("video/") ? "video" : "image");
-              setMediaUrl("");
-              setMediaPreview(URL.createObjectURL(file));
-              event.preventDefault();
-              break;
-            }
+  const handlePaste = (event) => {
+    // Paste handling is done via useClipboardFilePaste hook
+    // This function is kept for backward compatibility with onPaste attribute
+    if (!event.clipboardData) return;
+    const items = event.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === "file" && (item.type.startsWith("image/") || item.type.startsWith("video/"))) {
+        const file = item.getAsFile();
+        if (file) {
+          if (mediaPreview?.startsWith("blob:")) {
+            URL.revokeObjectURL(mediaPreview);
           }
+          setMediaFile(file);
+          setMediaType(file.type.startsWith("video/") ? "video" : "image");
+          setMediaUrl("");
+          setMediaPreview(URL.createObjectURL(file));
+          event.preventDefault();
+          break;
         }
-      };
+      }
+    }
+  };
+
+  const handleMediaFileChange = (event) => {
     const picked = event.target.files?.[0];
     if (!picked) return;
 

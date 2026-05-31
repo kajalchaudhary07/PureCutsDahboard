@@ -145,9 +145,83 @@ const getPaymentMode = (order = {}) =>
     .trim()
     .toUpperCase();
 
+const isCodOrder = (order = {}) =>
+  getPaymentMode(order) === "COD";
+
+const scannerBadgeClass = (state = "") => {
+  const s = String(state || "").toLowerCase().trim();
+  if (s === "active") return "badge-success";
+  if (s === "paid") return "badge-info";
+  if (s === "pending") return "badge-warning";
+  return "badge-default";
+};
+
 const isEditedOrder = (order = {}) => Boolean(
   order.isEditOrder || order.editMeta || order.originalOrderRef || order.originalOrderId
 );
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const invoiceHtml = (order = {}) => {
+  const orderRef = getOrderRef(order);
+  const customer = getCustomer(order);
+  const amount = getAmount(order);
+  const items = getItems(order);
+  const created = formatDateTime(order.createdAt || order.orderDate || order.date);
+
+  const rows =
+    items.length > 0
+      ? items
+          .map((item, idx) => {
+            const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+            const unit = Number(item.price ?? item.unitPrice ?? 0) || 0;
+            const total = qty * unit;
+            return `<tr>
+<td>${idx + 1}</td>
+<td>${escapeHtml(item.name || item.title || `Item ${idx + 1}`)}</td>
+<td>${qty}</td>
+<td>${formatCurrency(unit)}</td>
+<td>${formatCurrency(total)}</td>
+</tr>`;
+          })
+          .join("")
+      : `<tr><td>1</td><td>Order Total</td><td>1</td><td>${formatCurrency(amount)}</td><td>${formatCurrency(amount)}</td></tr>`;
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Invoice ${escapeHtml(orderRef)}</title>
+<style>
+body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
+table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+th, td { border: 1px solid #e2e8f0; padding: 8px; text-align: left; font-size: 12px; }
+th { background: #f8fafc; }
+.meta { margin-bottom: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<h2>PureCuts Invoice</h2>
+<div class="meta">
+  <div><strong>Order:</strong> ${escapeHtml(orderRef)}</div>
+  <div><strong>Date:</strong> ${escapeHtml(created)}</div>
+  <div><strong>Customer:</strong> ${escapeHtml(customer.name)}</div>
+  <div><strong>Email:</strong> ${escapeHtml(customer.email)}</div>
+  <div><strong>Total:</strong> ${escapeHtml(formatCurrency(amount))}</div>
+</div>
+<table>
+  <thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+</body>
+</html>`;
+};
 
 const getLockedQuantities = (order = {}) => {
   const editMeta = order.editMeta;
@@ -252,6 +326,42 @@ export default function OrderDetailsPage() {
     loadOrderDetails(routeOrderId);
   }, [routeOrderId]);
 
+  const handleDownloadInvoice = () => {
+    if (!order) {
+      toast.error("No order selected");
+      return;
+    }
+    try {
+      const html = invoiceHtml(order);
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `invoice-${getOrderRef(order)}.html`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Invoice downloaded");
+    } catch (error) {
+      toast.error("Failed to download invoice");
+    }
+  };
+
+  const handleDownloadScanner = () => {
+    if (!order?.codScanner?.qrImageUrl) {
+      toast.error("No scanner QR code available");
+      return;
+    }
+    try {
+      const link = document.createElement("a");
+      link.href = order.codScanner.qrImageUrl;
+      link.download = `scanner-${getOrderRef(order)}.png`;
+      link.click();
+      toast.success("Scanner QR downloaded");
+    } catch (error) {
+      toast.error("Failed to download scanner");
+    }
+  };
+
   const filteredOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return orders;
@@ -280,6 +390,10 @@ export default function OrderDetailsPage() {
   const paymentStatus = normalizeStatus(order?.paymentStatus, "pending");
   const editSourceRef = order?.originalOrderRef || order?.originalOrderId || order?.editMeta?.sourceOrderRef || order?.editMeta?.sourceOrderId || "";
   const lockedQuantities = getLockedQuantities(order || {});
+  const scanner = order?.codScanner || null;
+  const scannerState = String(scanner?.state || "pending").toLowerCase().trim();
+  const scannerLockedAmount = Number(scanner?.lockedAmount || 0) || 0;
+  const showScannerActions = isCodOrder(order || {});
 
   return (
     <>
