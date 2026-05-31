@@ -78,6 +78,7 @@ export default function AddProduct() {
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [originalImageUrl, setOriginalImageUrl] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [additionalImageFiles, setAdditionalImageFiles] = useState([]);
   const [descriptionMediaFiles, setDescriptionMediaFiles] = useState([]);
@@ -413,6 +414,9 @@ export default function AddProduct() {
             found.fullImageUrl,
             Array.isArray(found.images) ? found.images[0] : ""
           );
+          // Store the original image URL for deletion later if user changes it
+          setOriginalImageUrl(existingPrimaryImage);
+          
           if (existingPrimaryImage) {
             const previewStamp =
               toMillisSafe(found.updatedAt) ||
@@ -707,6 +711,30 @@ export default function AddProduct() {
     return uploadFileToPath(`products/${Date.now()}_${pendingFile.name}`, pendingFile, setUploadProgress);
   };
 
+  const deleteOldImage = async (imageUrl) => {
+    if (!imageUrl || typeof imageUrl !== "string") {
+      return;
+    }
+    
+    try {
+      const objectPath = getStoragePathFromUrl(imageUrl);
+      
+      if (!objectPath) {
+        return;
+      }
+      
+      if (!objectPath.startsWith("products/")) {
+        return;
+      }
+      
+      // Delete the old image from Firebase Storage
+      await deleteObject(ref(storage, objectPath));
+    } catch (err) {
+      console.error("Failed to delete old image:", err);
+      // Continue silently - don't block the save if deletion fails
+    }
+  };
+
   const uploadAdditionalImages = async () => {
     if (!additionalImageFiles.length) return [];
 
@@ -777,6 +805,7 @@ export default function AddProduct() {
   const getStoragePathFromUrl = (rawUrl) => {
     if (!rawUrl || typeof rawUrl !== "string") return "";
 
+    // Handle gs:// format
     if (rawUrl.startsWith("gs://")) {
       const firstSlash = rawUrl.indexOf("/", 5);
       return firstSlash > -1 ? rawUrl.slice(firstSlash + 1) : "";
@@ -784,15 +813,29 @@ export default function AddProduct() {
 
     try {
       const url = new URL(rawUrl);
+      
+      // Handle Firebase Storage URLs with /o/ in path
       const marker = "/o/";
       const markerIndex = url.pathname.indexOf(marker);
-      if (markerIndex === -1) return "";
+      if (markerIndex !== -1) {
+        const encodedPath = url.pathname.slice(markerIndex + marker.length);
+        return decodeURIComponent(encodedPath);
+      }
 
-      const encodedPath = url.pathname.slice(markerIndex + marker.length);
-      return decodeURIComponent(encodedPath);
-    } catch {
-      return "";
+      // Handle alternative format: firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}
+      if (url.hostname.includes("firebasestorage")) {
+        const segments = url.pathname.split("/");
+        const oIndex = segments.indexOf("o");
+        if (oIndex !== -1 && oIndex < segments.length - 1) {
+          const pathStart = segments.slice(oIndex + 1).join("/");
+          return decodeURIComponent(pathStart);
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing storage URL:", e);
     }
+    
+    return "";
   };
 
   const handleVariantImageDelete = async (row) => {
@@ -1248,11 +1291,41 @@ export default function AddProduct() {
 
       const pendingThumbnailFile = imageFile || fileRef.current?.files?.[0] || null;
       const hasPendingThumbnailFile = Boolean(pendingThumbnailFile);
+      
+      // Delete old thumbnail image in background when editing and changing image
+      if (isEdit && hasPendingThumbnailFile && originalImageUrl) {
+        deleteOldImage(originalImageUrl).catch(err => console.error("Background deletion failed:", err));
+      }
+      
       const imageUrl = await uploadImage(pendingThumbnailFile);
       const additionalUrls = await uploadAdditionalImages();
+      
+      // When changing thumbnail, completely replace all images
+      let mergedAdditionalImages = [];
+      let finalImages = [];
+      
+      if (isEdit && hasPendingThumbnailFile) {
+        // When thumbnail is changed, only keep newly added additional images
+        mergedAdditionalImages = additionalUrls;
+      } else {
+        // When not changing thumbnail, keep existing additional images
+        const oldAdditionalImages = form.additionalImages || [];
+        const newAdditionalImages = additionalImageFiles.map((item) => item.file?.name || "");
+        const keptImages = new Set([
+          ...oldAdditionalImages.filter((url) => {
+            const path = getStoragePathFromUrl(url);
+            return newAdditionalImages.some((name) => path.includes(name));
+          }),
+          ...additionalUrls,
+        ]);
+        
+        const imagesToDelete = oldAdditionalImages.filter((url) => !keptImages.has(url));
+        await Promise.all(imagesToDelete.map(deleteOldImage));
+        mergedAdditionalImages = Array.from(keptImages);
+      }
+      
       const descriptionMediaUrls = await uploadDescriptionMedia();
       const shortMediaUrls = await uploadShortDescriptionMedia();
-      const mergedAdditionalImages = [...(form.additionalImages || []), ...additionalUrls];
       const mergedDescription = [
         form.description || "",
         ...descriptionMediaUrls.map((url) => `![media](${url})`),
@@ -1357,9 +1430,7 @@ export default function AddProduct() {
         fullImageUrl: primaryImage,
         images: buildOrderedImageList(
           primaryImage,
-          form.images,
-          mergedAdditionalImages,
-          form.additionalImages
+          mergedAdditionalImages
         ),
         tags: finalTags,
         tag: finalTags[0] || form.tag || "",
