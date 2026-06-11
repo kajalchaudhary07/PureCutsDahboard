@@ -7,6 +7,7 @@ import {
   MdCategory,
   MdClose,
   MdSort,
+  MdSearch,
 } from "react-icons/md";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
@@ -41,6 +42,7 @@ export default function SubSubCategoriesList() {
   const [filterCategory, setFilterCategory] = useState("All");
   const [filterSubCategory, setFilterSubCategory] = useState("All");
   const [sortBy, setSortBy] = useState("name_asc");
+  const [search, setSearch] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const fileRef = useRef();
@@ -241,13 +243,24 @@ export default function SubSubCategoriesList() {
   ];
 
   const filtered = useMemo(() => {
-    const list = rows.filter((row) => {
+    const q = search.trim().toLowerCase();
+    let list = rows.filter((row) => {
       const byCategory =
         filterCategory === "All" || row.parentCategory === filterCategory;
       const bySub =
         filterSubCategory === "All" || row.parentSubCategory === filterSubCategory;
       return byCategory && bySub;
     });
+
+    // Apply search filter
+    if (q) {
+      list = list.filter((row) => {
+        const name = (row.name || "").toLowerCase();
+        const parentCat = (row.parentCategory || "").toLowerCase();
+        const parentSubCat = (row.parentSubCategory || "").toLowerCase();
+        return name.includes(q) || parentCat.includes(q) || parentSubCat.includes(q);
+      });
+    }
 
     list.sort((a, b) => {
       if (sortBy === "name_desc") {
@@ -278,7 +291,7 @@ export default function SubSubCategoriesList() {
     });
 
     return list;
-  }, [filterCategory, filterSubCategory, rows, sortBy]);
+  }, [filterCategory, filterSubCategory, rows, sortBy, search]);
 
   const modalSubCategories = subCategories.filter(
     (s) => !form.parentCategory || s.parentCategory === form.parentCategory
@@ -451,6 +464,20 @@ export default function SubSubCategoriesList() {
               <option value="oldest">Oldest → Newest</option>
               <option value="newest">Newest → Oldest</option>
             </select>
+          </div>
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label className="text-muted" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
+            Search
+          </label>
+          <div className="search-wrap">
+            <MdSearch />
+            <input
+              className="search-input"
+              placeholder="Search by name or category…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
         </div>
       </div>

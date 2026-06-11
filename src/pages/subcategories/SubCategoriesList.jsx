@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { MdAdd, MdEdit, MdDelete, MdAccountTree, MdClose, MdSort } from "react-icons/md";
+import { MdAdd, MdEdit, MdDelete, MdAccountTree, MdClose, MdSort, MdSearch } from "react-icons/md";
 import {
   getSubCategories, addSubCategory, updateSubCategory, deleteSubCategory,
   getCategories,
@@ -25,6 +25,7 @@ export default function SubCategoriesList() {
   const [imagePreview, setImagePreview] = useState(null);
   const [filterCat, setFilterCat] = useState("All");
   const [sortBy, setSortBy] = useState("name_asc");
+  const [search, setSearch] = useState("");
   const fileRef = useRef();
 
   const load = async () => {
@@ -147,12 +148,20 @@ export default function SubCategoriesList() {
   ];
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     const rows =
       filterCat === "All"
         ? [...subCats]
         : subCats.filter((s) => s.parentCategory === filterCat);
 
-    rows.sort((a, b) => {
+    // Apply search filter
+    const searched = q ? rows.filter((s) => {
+      const name = (s.name || "").toLowerCase();
+      const parentCat = (s.parentCategory || "").toLowerCase();
+      return name.includes(q) || parentCat.includes(q);
+    }) : rows;
+
+    searched.sort((a, b) => {
       if (sortBy === "name_desc") {
         return String(b.name || "").localeCompare(String(a.name || ""), undefined, {
           sensitivity: "base",
@@ -169,8 +178,8 @@ export default function SubCategoriesList() {
       });
     });
 
-    return rows;
-  }, [filterCat, sortBy, subCats]);
+    return searched;
+  }, [filterCat, sortBy, subCats, search]);
 
   return (
     <>
@@ -272,7 +281,17 @@ export default function SubCategoriesList() {
           </button>
         ))}
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+        <div className="search-wrap" style={{ marginLeft: "auto", marginRight: 12 }}>
+          <MdSearch />
+          <input
+            className="search-input"
+            placeholder="Search by name or category…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <MdSort style={{ color: "#64748b" }} />
           <select
             value={sortBy}

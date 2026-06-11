@@ -207,11 +207,22 @@ export default function Sidebar() {
     reviews: 0,
     chats: 0,
   });
-  const [seenBadgeCounts, setSeenBadgeCounts] = useState({
-    newUsers: 0,
-    orders: 0,
-    reviews: 0,
-    chats: 0,
+  const [seenBadgeCounts, setSeenBadgeCounts] = useState(() => {
+    try {
+      const stored = localStorage.getItem("purecuts_seen_badge_counts");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return {
+          newUsers: parsed.newUsers || 0,
+          orders: parsed.orders || 0,
+          reviews: parsed.reviews || 0,
+          chats: parsed.chats || 0,
+        };
+      }
+    } catch (e) {
+      console.warn("Failed to load seen badge counts from localStorage:", e);
+    }
+    return { newUsers: 0, orders: 0, reviews: 0, chats: 0 };
   });
 
   const canView = (item) => {
@@ -330,10 +341,17 @@ export default function Sidebar() {
       const currentSeen = Number(prev[key] || 0);
       const currentCount = Number(badgeCounts[key] || 0);
       if (currentSeen >= currentCount) return prev;
-      return {
+      const updated = {
         ...prev,
         [key]: currentCount,
       };
+      // Persist to localStorage
+      try {
+        localStorage.setItem("purecuts_seen_badge_counts", JSON.stringify(updated));
+      } catch (e) {
+        console.warn("Failed to persist seen badge counts to localStorage:", e);
+      }
+      return updated;
     });
   }, [location.pathname, badgeCounts]);
 

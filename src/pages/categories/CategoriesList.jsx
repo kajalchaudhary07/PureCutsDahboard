@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { MdAdd, MdEdit, MdDelete, MdCategory, MdClose } from "react-icons/md";
+import { MdAdd, MdEdit, MdDelete, MdCategory, MdClose, MdSearch } from "react-icons/md";
 import {
   getCategories, addCategory, updateCategory, deleteCategory,
 } from "../../firestoreService";
@@ -21,6 +21,7 @@ export default function CategoriesList() {
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [search, setSearch] = useState("");
   const fileRef = useRef();
   const imgUploadDivRef = useRef();
   // Handle paste event for category image
@@ -228,9 +229,19 @@ export default function CategoriesList() {
         </button>
       </div>
 
+      <div className="search-wrap categories-search-wrap" style={{ marginBottom: 16 }}>
+        <MdSearch />
+        <input
+          className="search-input"
+          placeholder="Search category by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
       <div className="card">
         <div className="card-header">
-          <span className="card-title">All Categories ({categories.length})</span>
+          <span className="card-title">All Categories ({categories.filter((c) => !search.trim() || (c.name || "").toLowerCase().includes(search.toLowerCase())).length})</span>
         </div>
 
         {loading ? (
@@ -254,7 +265,9 @@ export default function CategoriesList() {
                 </tr>
               </thead>
               <tbody>
-                {categories.map((c, i) => (
+                {categories
+                  .filter((c) => !search.trim() || (c.name || "").toLowerCase().includes(search.toLowerCase()))
+                  .map((c, i) => (
                   <tr key={c.id}>
                     <td className="text-muted">{i + 1}</td>
                     <td>

@@ -278,6 +278,7 @@ export default function ProductsList() {
       if (sortBy === "newest") {
         return getCreatedAtMs(b) - getCreatedAtMs(a);
       }
+      // Default: name_asc (A → Z)
       return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
         sensitivity: "base",
       });
