@@ -206,7 +206,10 @@ export default function DashboardPage() {
                 {recentOrders.map((order) => (
                   <tr key={order.id}>
                     <td className="font-medium">#{order.orderId || order.code || order.id}</td>
-                    <td>{order.customerName || order.customer?.name || "Unknown"}</td>
+                    <td>
+                      {order.customerName || order.customer?.name || "Unknown"}
+                      {(order.salonName || order.salon_name || order.salon || order.customer?.salonName || order.customer?.salon_name || order.customer?.salon || order.user?.salonName || order.user?.salon_name || order.user?.salon) ? ` - ${order.salonName || order.salon_name || order.salon || order.customer?.salonName || order.customer?.salon_name || order.customer?.salon || order.user?.salonName || order.user?.salon_name || order.user?.salon}` : ""}
+                    </td>
                     <td>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <span className="badge badge-gray">

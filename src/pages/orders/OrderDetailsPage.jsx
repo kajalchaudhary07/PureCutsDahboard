@@ -78,6 +78,19 @@ const getCustomer = (order = {}) => {
       order.user?.name ||
       fallbackId ||
       "—",
+    salonName:
+      order.salonName ||
+      order.salon_name ||
+      order.salon ||
+      order.customer?.salonName ||
+      order.customer?.salon_name ||
+      order.customer?.salon ||
+      order.user?.salonName ||
+      order.user?.salon_name ||
+      order.user?.salon ||
+      order.deliveryAddress?.salonName ||
+      order.deliveryAddress?.company ||
+      "",
     email:
       order.customerEmail ||
       order.customer?.email ||
@@ -656,7 +669,9 @@ export default function OrderDetailsPage() {
                 <div className="order-detail-box">
                   <h4>Customer</h4>
                   <p><strong>{customer.name}</strong></p>
-                  <p>{customer.email}</p>
+                  <p style={{ color: "#64748b", fontSize: "0.875rem", marginTop: "-4px" }}>
+                    {customer.salonName ? `📍 ${customer.salonName}` : "—"}
+                  </p>
                   <p>{customer.phone}</p>
                 </div>
 

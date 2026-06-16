@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
-import { MdAdd, MdEdit, MdDelete, MdBrandingWatermark, MdClose } from "react-icons/md";
+import { MdAdd, MdEdit, MdDelete, MdBrandingWatermark, MdClose, MdSearch } from "react-icons/md";
 import {
   getBrands, addBrand, updateBrand, deleteBrand,
 } from "../../firestoreService";
@@ -21,6 +21,7 @@ export default function BrandsList() {
   const [saving, setSaving] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [search, setSearch] = useState("");
   const fileRef = useRef();
   const imgUploadDivRef = useRef();
   // Handle paste event for brand logo image
@@ -43,7 +44,12 @@ export default function BrandsList() {
 
   const load = async () => {
     setLoading(true);
-    try { setBrands(await getBrands()); }
+    try {
+      const data = await getBrands();
+      // Sort alphabetically A-Z by brand name
+      data.sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }));
+      setBrands(data);
+    }
     catch { toast.error("Failed to load brands"); }
     finally { setLoading(false); }
   };
@@ -208,9 +214,19 @@ export default function BrandsList() {
         </button>
       </div>
 
+      <div className="search-wrap brands-search-wrap" style={{ marginBottom: 16 }}>
+        <MdSearch />
+        <input
+          className="search-input"
+          placeholder="Search brand by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
       <div className="card">
         <div className="card-header">
-          <span className="card-title">All Brands ({brands.length})</span>
+          <span className="card-title">All Brands ({brands.filter((b) => !search.trim() || (b.name || "").toLowerCase().includes(search.toLowerCase())).length})</span>
         </div>
 
         {loading ? (
@@ -233,7 +249,9 @@ export default function BrandsList() {
                 </tr>
               </thead>
               <tbody>
-                {brands.map((b, i) => (
+                {brands
+                  .filter((b) => !search.trim() || (b.name || "").toLowerCase().includes(search.toLowerCase()))
+                  .map((b, i) => (
                   <tr key={b.id}>
                     <td className="text-muted">{i + 1}</td>
                     <td>

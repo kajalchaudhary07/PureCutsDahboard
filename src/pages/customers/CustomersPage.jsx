@@ -239,7 +239,10 @@ export default function CustomersPage() {
                       <div className="customer-cell">
                         <div className="customer-avatar">{getInitials(user.name || user.email)}</div>
                         <div>
-                          <div className="font-medium">{user.name || "Unnamed user"}</div>
+                          <div className="font-medium">
+                            {user.name || "Unnamed user"}
+                            {(user.salonName || user.salon_name || user.salon || user.salonName_temp || user.salon_name_temp) ? ` - ${user.salonName || user.salon_name || user.salon || user.salonName_temp || user.salon_name_temp}` : ""}
+                          </div>
                           <div className="text-muted">{user.uid || user.id}</div>
                         </div>
                       </div>

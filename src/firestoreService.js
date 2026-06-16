@@ -1019,6 +1019,17 @@ const hydrateOrdersWithCustomerProfile = async (orders) => {
 
     const enriched = {
       ...order,
+      salonName:
+        order.salonName ||
+        order.salon_name ||
+        order.salon ||
+        order.customer?.salonName ||
+        order.customer?.salon_name ||
+        order.user?.salonName ||
+        profile.salonName ||
+        profile.salon_name ||
+        profile.salon ||
+        "",
       customerName:
         order.customerName ||
         order.customer?.name ||

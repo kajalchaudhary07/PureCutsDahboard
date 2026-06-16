@@ -98,6 +98,17 @@ const getCustomer = (order) => {
       order.user?.name ||
       fallbackId ||
       "—",
+    salonName:
+      order.salonName ||
+      order.salon_name ||
+      order.salon ||
+      order.customer?.salonName ||
+      order.customer?.salon_name ||
+      order.customer?.salon ||
+      order.user?.salonName ||
+      order.user?.salon_name ||
+      order.user?.salon ||
+      "",
     email:
       order.customerEmail ||
       order.customer?.email ||
@@ -1091,7 +1102,9 @@ export default function OrdersList() {
                       </td>
                       <td>
                         <div className="font-medium">{customer.name}</div>
-                        <div className="text-muted" style={{ fontSize: 12 }}>{customer.email}</div>
+                        <div className="text-muted" style={{ fontSize: 12, marginTop: 2 }}>
+                          {customer.salonName ? `📍 ${customer.salonName}` : "—"}
+                        </div>
                       </td>
                       <td>
                         <span className="order-items-pill">{Math.max(1, getItemsCount(order))}</span>
