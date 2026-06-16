@@ -113,6 +113,14 @@ export const getProductsPaginated = async ({
 export const addProduct = (data) => addItem("products", data);
 export const updateProduct = (id, data) => updateItem("products", id, data);
 export const deleteProduct = (id) => deleteItem("products", id);
+export const deleteProductsBulk = async (ids) => {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  const batch = writeBatch(db);
+  ids.forEach((id) => {
+    batch.delete(doc(db, "products", id));
+  });
+  await batch.commit();
+};
 
 export const createProduct = (data) => addItem("products", data);
 

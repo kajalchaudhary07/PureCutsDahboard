@@ -11,7 +11,7 @@ import {
   MdOutlineVisibility,
   MdOutlineVisibilityOff,
 } from "react-icons/md";
-import { getProductsPaginated, deleteProduct, updateProduct } from "../../firestoreService";
+import { getProductsPaginated, deleteProduct, updateProduct, deleteProductsBulk } from "../../firestoreService";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax", "Furnitures"];
@@ -93,30 +93,49 @@ export default function ProductsList() {
   const [subSubCatFilter, setSubSubCatFilter] = useState("All");
   const [sortBy, setSortBy] = useState("name_asc");
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [selectedProductIds, setSelectedProductIds] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [bulkUpdating, setBulkUpdating] = useState(false);
-  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const navigate = useNavigate();
 
-  const toggleSelectProduct = (productId) => {
-    setSelectedProductIds((prev) =>
-      prev.includes(productId)
-        ? prev.filter((id) => id !== productId)
-        : [...prev, productId]
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
+
+  const toggleSelectAll = () => {
+    const visibleIds = filtered.map((p) => p.id);
+    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => {
+        const next = [...prev];
+        visibleIds.forEach((id) => {
+          if (!next.includes(id)) next.push(id);
+        });
+        return next;
+      });
+    }
+  };
+
+  // Clear selection when filters or search change
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [catFilter, subCatFilter, subSubCatFilter, search]);
 
   const handleBulkPublish = async () => {
     setBulkUpdating(true);
     try {
-      await Promise.all(selectedProductIds.map((id) => updateProduct(id, { visibility: "publish" })));
+      await Promise.all(selectedIds.map((id) => updateProduct(id, { visibility: "publish" })));
       setProducts((prev) =>
         prev.map((p) =>
-          selectedProductIds.includes(p.id) ? { ...p, visibility: "publish" } : p
+          selectedIds.includes(p.id) ? { ...p, visibility: "publish" } : p
         )
       );
-      toast.success(`${selectedProductIds.length} product(s) set to Published`);
-      setSelectedProductIds([]);
+      toast.success(`${selectedIds.length} product(s) set to Published`);
+      setSelectedIds([]);
     } catch {
       toast.error("Failed to update some products visibility");
     } finally {
@@ -127,14 +146,14 @@ export default function ProductsList() {
   const handleBulkDraft = async () => {
     setBulkUpdating(true);
     try {
-      await Promise.all(selectedProductIds.map((id) => updateProduct(id, { visibility: "draft" })));
+      await Promise.all(selectedIds.map((id) => updateProduct(id, { visibility: "draft" })));
       setProducts((prev) =>
         prev.map((p) =>
-          selectedProductIds.includes(p.id) ? { ...p, visibility: "draft" } : p
+          selectedIds.includes(p.id) ? { ...p, visibility: "draft" } : p
         )
       );
-      toast.success(`${selectedProductIds.length} product(s) set to Draft`);
-      setSelectedProductIds([]);
+      toast.success(`${selectedIds.length} product(s) set to Draft`);
+      setSelectedIds([]);
     } catch {
       toast.error("Failed to update some products visibility");
     } finally {
@@ -143,12 +162,12 @@ export default function ProductsList() {
   };
 
   const handleBulkDelete = async () => {
-    setBulkDeleteConfirm(false);
+    setShowBulkDeleteConfirm(false);
     setBulkUpdating(true);
     try {
-      await Promise.all(selectedProductIds.map((id) => deleteProduct(id)));
-      toast.success(`${selectedProductIds.length} product(s) deleted`);
-      setSelectedProductIds([]);
+      await deleteProductsBulk(selectedIds);
+      toast.success(`${selectedIds.length} product(s) deleted`);
+      setSelectedIds([]);
       load({ append: false });
     } catch {
       toast.error("Bulk delete failed");
@@ -163,7 +182,7 @@ export default function ProductsList() {
       setLoadingMore(true);
     } else {
       setLoading(true);
-      setSelectedProductIds([]);
+      setSelectedIds([]);
     }
 
     try {
@@ -354,13 +373,14 @@ export default function ProductsList() {
     try {
       await deleteProduct(deleteTarget);
       toast.success("Product deleted");
-      setSelectedProductIds((prev) => prev.filter((id) => id !== deleteTarget));
+      setSelectedIds((prev) => prev.filter((id) => id !== deleteTarget));
       setDeleteTarget(null);
       load({ append: false });
     } catch {
       toast.error("Delete failed");
     }
   };
+
 
   const normalizeVisibility = (product) => {
     const raw = String(product.visibility || "publish").trim().toLowerCase();
@@ -397,12 +417,12 @@ export default function ProductsList() {
         />
       )}
 
-      {bulkDeleteConfirm && (
+      {showBulkDeleteConfirm && (
         <ConfirmDialog
           title="Delete Selected Products?"
-          message={`Are you sure you want to permanently remove ${selectedProductIds.length} selected product(s)?`}
+          message={`Are you sure you want to permanently delete the ${selectedIds.length} selected product(s)?`}
           onConfirm={handleBulkDelete}
-          onCancel={() => setBulkDeleteConfirm(false)}
+          onCancel={() => setShowBulkDeleteConfirm(false)}
         />
       )}
 
@@ -485,10 +505,10 @@ export default function ProductsList() {
       <div className="card">
         <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
           <span className="card-title">
-            Products ({filtered.length}) {selectedProductIds.length > 0 && `(${selectedProductIds.length} selected)`}
+            Products ({filtered.length}) {selectedIds.length > 0 && `(${selectedIds.length} selected)`}
             {searchHydrating ? " • Expanding search..." : ""}
           </span>
-          {selectedProductIds.length > 0 && (
+          {selectedIds.length > 0 && (
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <button
                 className="btn btn-outline btn-sm"
@@ -509,14 +529,14 @@ export default function ProductsList() {
               <button
                 className="btn btn-danger btn-sm"
                 style={{ display: "flex", alignItems: "center", gap: 4 }}
-                onClick={() => setBulkDeleteConfirm(true)}
+                onClick={() => setShowBulkDeleteConfirm(true)}
                 disabled={bulkUpdating}
               >
                 <MdDelete /> Delete Selected
               </button>
               <button
                 className="btn btn-outline btn-sm"
-                onClick={() => setSelectedProductIds([])}
+                onClick={() => setSelectedIds([])}
                 disabled={bulkUpdating}
               >
                 Clear Selection
@@ -537,27 +557,15 @@ export default function ProductsList() {
             <table>
               <thead>
                 <tr>
-                  <th>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <input
-                        type="checkbox"
-                        checked={filtered.length > 0 && filtered.every((p) => selectedProductIds.includes(p.id))}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedProductIds((prev) => {
-                              const nextSet = new Set([...prev, ...filtered.map((p) => p.id)]);
-                              return Array.from(nextSet);
-                            });
-                          } else {
-                            const filteredIds = new Set(filtered.map((p) => p.id));
-                            setSelectedProductIds((prev) => prev.filter((id) => !filteredIds.has(id)));
-                          }
-                        }}
-                        style={{ cursor: "pointer" }}
-                      />
-                      #
-                    </div>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((p) => selectedIds.includes(p.id))}
+                      onChange={toggleSelectAll}
+                      style={{ cursor: "pointer", width: 16, height: 16 }}
+                    />
                   </th>
+                  <th>#</th>
                   <th>Image</th>
                   <th>Name</th>
                   <th>Brand</th>
@@ -574,8 +582,8 @@ export default function ProductsList() {
                 {filtered.map((p, i) => (
                   <tr
                     key={p.id}
-                    className={selectedProductIds.includes(p.id) ? "selected-row" : ""}
-                    onClick={() => toggleSelectProduct(p.id)}
+                    className={selectedIds.includes(p.id) ? "selected-row" : ""}
+                    onClick={() => toggleSelect(p.id)}
                     style={{ cursor: "pointer" }}
                   >
                     {(() => {
@@ -583,16 +591,16 @@ export default function ProductsList() {
                       const isPublished = visibility === "publish";
                       return (
                         <>
-                    <td className="text-muted" onClick={(e) => { e.stopPropagation(); toggleSelectProduct(p.id); }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedProductIds.includes(p.id)}
-                          readOnly
-                          style={{ cursor: "pointer" }}
-                        />
-                        {i + 1}
-                      </div>
+                    <td onClick={(e) => { e.stopPropagation(); toggleSelect(p.id); }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(p.id)}
+                        readOnly
+                        style={{ cursor: "pointer", width: 16, height: 16 }}
+                      />
+                    </td>
+                    <td className="text-muted" onClick={(e) => { e.stopPropagation(); toggleSelect(p.id); }}>
+                      {i + 1}
                     </td>
                     <td>
                       {resolveProductThumb(p) ? (

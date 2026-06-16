@@ -13,8 +13,6 @@ import SubSubCategoriesList from "./pages/subsubcategories/SubSubCategoriesList"
 import AttributesList from "./pages/attributes/AttributesList";
 import CreateAttribute from "./pages/attributes/CreateAttribute";
 import ProductReviews from "./pages/reviews/ProductReviews";
-import ProductSuggestionsList from "./pages/productSuggestions/ProductSuggestionsList";
-import ProductSuggestionForm from "./pages/productSuggestions/ProductSuggestionForm";
 import AdminManagement from "./pages/admin/AdminManagement";
 import RolesManagement from "./pages/roles/RolesManagement";
 import OrdersList from "./pages/orders/OrdersList";
@@ -64,16 +62,13 @@ export default function App() {
               <Route path="order-details" element={<OrderDetailsPage />} />
               <Route path="order-details/:id" element={<OrderDetailsPage />} />
               <Route path="product-reviews" element={<ProductReviews />} />
-              <Route path="product-suggestions" element={<ProductSuggestionsList />} />
-              <Route path="product-suggestions/add" element={<ProductSuggestionForm />} />
-              <Route path="product-suggestions/edit/:id" element={<ProductSuggestionForm />} />
               <Route path="banners" element={<BannersPage />} />
               <Route path="coupons" element={<CouponsPage />} />
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="chat" element={<ChatPage />} />
+              <Route path="bot" element={<BotPage />} />
               <Route path="support-bot" element={<SupportBotPage />} />
               <Route path="image-guide" element={<ImageResolutionGuidePage />} />
-              <Route path="bot" element={<BotPage />} />
               <Route path="admin" element={<AdminManagement />} />
               <Route path="roles" element={<RolesManagement />} />
               <Route path="profile" element={<ProfilePage />} />
