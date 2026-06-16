@@ -93,7 +93,69 @@ export default function ProductsList() {
   const [subSubCatFilter, setSubSubCatFilter] = useState("All");
   const [sortBy, setSortBy] = useState("name_asc");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const navigate = useNavigate();
+
+  const toggleSelectProduct = (productId) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId]
+    );
+  };
+
+  const handleBulkPublish = async () => {
+    setBulkUpdating(true);
+    try {
+      await Promise.all(selectedProductIds.map((id) => updateProduct(id, { visibility: "publish" })));
+      setProducts((prev) =>
+        prev.map((p) =>
+          selectedProductIds.includes(p.id) ? { ...p, visibility: "publish" } : p
+        )
+      );
+      toast.success(`${selectedProductIds.length} product(s) set to Published`);
+      setSelectedProductIds([]);
+    } catch {
+      toast.error("Failed to update some products visibility");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const handleBulkDraft = async () => {
+    setBulkUpdating(true);
+    try {
+      await Promise.all(selectedProductIds.map((id) => updateProduct(id, { visibility: "draft" })));
+      setProducts((prev) =>
+        prev.map((p) =>
+          selectedProductIds.includes(p.id) ? { ...p, visibility: "draft" } : p
+        )
+      );
+      toast.success(`${selectedProductIds.length} product(s) set to Draft`);
+      setSelectedProductIds([]);
+    } catch {
+      toast.error("Failed to update some products visibility");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleteConfirm(false);
+    setBulkUpdating(true);
+    try {
+      await Promise.all(selectedProductIds.map((id) => deleteProduct(id)));
+      toast.success(`${selectedProductIds.length} product(s) deleted`);
+      setSelectedProductIds([]);
+      load({ append: false });
+    } catch {
+      toast.error("Bulk delete failed");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
 
   const load = async ({ append = false } = {}) => {
     if (append) {
@@ -101,6 +163,7 @@ export default function ProductsList() {
       setLoadingMore(true);
     } else {
       setLoading(true);
+      setSelectedProductIds([]);
     }
 
     try {
@@ -291,6 +354,7 @@ export default function ProductsList() {
     try {
       await deleteProduct(deleteTarget);
       toast.success("Product deleted");
+      setSelectedProductIds((prev) => prev.filter((id) => id !== deleteTarget));
       setDeleteTarget(null);
       load({ append: false });
     } catch {
@@ -330,6 +394,15 @@ export default function ProductsList() {
           message="This product will be permanently removed."
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {bulkDeleteConfirm && (
+        <ConfirmDialog
+          title="Delete Selected Products?"
+          message={`Are you sure you want to permanently remove ${selectedProductIds.length} selected product(s)?`}
+          onConfirm={handleBulkDelete}
+          onCancel={() => setBulkDeleteConfirm(false)}
         />
       )}
 
@@ -410,11 +483,46 @@ export default function ProductsList() {
       </div>
 
       <div className="card">
-        <div className="card-header">
+        <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
           <span className="card-title">
-            Products ({filtered.length})
+            Products ({filtered.length}) {selectedProductIds.length > 0 && `(${selectedProductIds.length} selected)`}
             {searchHydrating ? " • Expanding search..." : ""}
           </span>
+          {selectedProductIds.length > 0 && (
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                className="btn btn-outline btn-sm"
+                style={{ display: "flex", alignItems: "center", gap: 4 }}
+                onClick={handleBulkPublish}
+                disabled={bulkUpdating}
+              >
+                <MdOutlineVisibility /> Set Published
+              </button>
+              <button
+                className="btn btn-outline btn-sm"
+                style={{ display: "flex", alignItems: "center", gap: 4 }}
+                onClick={handleBulkDraft}
+                disabled={bulkUpdating}
+              >
+                <MdOutlineVisibilityOff /> Set Draft
+              </button>
+              <button
+                className="btn btn-danger btn-sm"
+                style={{ display: "flex", alignItems: "center", gap: 4 }}
+                onClick={() => setBulkDeleteConfirm(true)}
+                disabled={bulkUpdating}
+              >
+                <MdDelete /> Delete Selected
+              </button>
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => setSelectedProductIds([])}
+                disabled={bulkUpdating}
+              >
+                Clear Selection
+              </button>
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -429,7 +537,27 @@ export default function ProductsList() {
             <table>
               <thead>
                 <tr>
-                  <th>#</th>
+                  <th>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={filtered.length > 0 && filtered.every((p) => selectedProductIds.includes(p.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedProductIds((prev) => {
+                              const nextSet = new Set([...prev, ...filtered.map((p) => p.id)]);
+                              return Array.from(nextSet);
+                            });
+                          } else {
+                            const filteredIds = new Set(filtered.map((p) => p.id));
+                            setSelectedProductIds((prev) => prev.filter((id) => !filteredIds.has(id)));
+                          }
+                        }}
+                        style={{ cursor: "pointer" }}
+                      />
+                      #
+                    </div>
+                  </th>
                   <th>Image</th>
                   <th>Name</th>
                   <th>Brand</th>
@@ -444,13 +572,28 @@ export default function ProductsList() {
               </thead>
               <tbody>
                 {filtered.map((p, i) => (
-                  <tr key={p.id}>
+                  <tr
+                    key={p.id}
+                    className={selectedProductIds.includes(p.id) ? "selected-row" : ""}
+                    onClick={() => toggleSelectProduct(p.id)}
+                    style={{ cursor: "pointer" }}
+                  >
                     {(() => {
                       const visibility = normalizeVisibility(p);
                       const isPublished = visibility === "publish";
                       return (
                         <>
-                    <td className="text-muted">{i + 1}</td>
+                    <td className="text-muted" onClick={(e) => { e.stopPropagation(); toggleSelectProduct(p.id); }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedProductIds.includes(p.id)}
+                          readOnly
+                          style={{ cursor: "pointer" }}
+                        />
+                        {i + 1}
+                      </div>
+                    </td>
                     <td>
                       {resolveProductThumb(p) ? (
                         <img src={resolveProductThumb(p)} alt={p.name} className="table-img" />
@@ -494,7 +637,7 @@ export default function ProductsList() {
                         {p.stock !== undefined ? (p.stock > 0 ? "In Stock" : "Out") : "In Stock"}
                       </span>
                     </td>
-                    <td>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-2">
                         <button
                           className={`btn btn-sm btn-icon ${

@@ -289,6 +289,8 @@ tbody td {
 }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: #f8fafc; }
+tbody tr.selected-row { background: #e0f2fe; }
+tbody tr.selected-row:hover { background: #bae6fd; }
 
 .table-img {
   width: 44px; height: 44px;

@@ -90,7 +90,15 @@ export default function AddProduct() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
   const [variantRows, setVariantRows] = useState([]);
+  const [selectedVariantKeys, setSelectedVariantKeys] = useState([]);
   const [existingVariantIds, setExistingVariantIds] = useState([]);
+
+  useEffect(() => {
+    setSelectedVariantKeys((prev) => {
+      const existingKeys = new Set(variantRows.map((v) => v.variantKey));
+      return prev.filter((key) => existingKeys.has(key));
+    });
+  }, [variantRows]);
   const [variantUploadProgress, setVariantUploadProgress] = useState({});
   const [variantDeleteProgress, setVariantDeleteProgress] = useState({});
   const [attributeEditState, setAttributeEditState] = useState({
@@ -974,9 +982,19 @@ export default function AddProduct() {
   };
 
   const updateVariantRow = (variantKey, field, value) => {
-    setVariantRows((rows) => rows.map((row) => (
-      row.variantKey === variantKey ? { ...row, [field]: value } : row
-    )));
+    setVariantRows((rows) => rows.map((row) => {
+      if (row.variantKey === variantKey) {
+        return { ...row, [field]: value };
+      }
+      if (
+        selectedVariantKeys.includes(variantKey) &&
+        selectedVariantKeys.includes(row.variantKey) &&
+        ["price", "regularPrice", "salePrice"].includes(field)
+      ) {
+        return { ...row, [field]: value };
+      }
+      return row;
+    }));
   };
 
   const normalizePricingTiers = (rawTiers = []) => {
@@ -2149,6 +2167,20 @@ export default function AddProduct() {
                     <table className="pe-variant-table">
                       <thead>
                         <tr>
+                          <th style={{ width: 44, textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={variantRows.length > 0 && variantRows.every((r) => selectedVariantKeys.includes(r.variantKey))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedVariantKeys(variantRows.map((r) => r.variantKey));
+                                } else {
+                                  setSelectedVariantKeys([]);
+                                }
+                              }}
+                              style={{ cursor: "pointer" }}
+                            />
+                          </th>
                           <th>Value</th>
                           <th>SKU</th>
                           <th>Price</th>
@@ -2162,7 +2194,21 @@ export default function AddProduct() {
                       </thead>
                       <tbody>
                         {variantRows.map((row) => (
-                          <tr key={row.variantKey}>
+                          <tr key={row.variantKey} className={selectedVariantKeys.includes(row.variantKey) ? "selected-row" : ""}>
+                            <td style={{ textAlign: "center" }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedVariantKeys.includes(row.variantKey)}
+                                onChange={() => {
+                                  setSelectedVariantKeys((prev) =>
+                                    prev.includes(row.variantKey)
+                                      ? prev.filter((k) => k !== row.variantKey)
+                                      : [...prev, row.variantKey]
+                                  );
+                                }}
+                                style={{ cursor: "pointer" }}
+                              />
+                            </td>
                             <td>
                               {variationAttribute?.isColorField ? (
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
