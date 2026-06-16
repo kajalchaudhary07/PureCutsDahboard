@@ -11,7 +11,7 @@ import {
   MdOutlineVisibility,
   MdOutlineVisibilityOff,
 } from "react-icons/md";
-import { getProductsPaginated, deleteProduct, updateProduct } from "../../firestoreService";
+import { getProductsPaginated, deleteProduct, updateProduct, deleteProductsBulk } from "../../firestoreService";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const CATEGORIES = ["All", "Hair Care", "Color", "Tools", "Skin Care", "Nail", "Beard", "Wax", "Furnitures"];
@@ -93,7 +93,36 @@ export default function ProductsList() {
   const [subSubCatFilter, setSubSubCatFilter] = useState("All");
   const [sortBy, setSortBy] = useState("name_asc");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const navigate = useNavigate();
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    const visibleIds = filtered.map((p) => p.id);
+    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => {
+        const next = [...prev];
+        visibleIds.forEach((id) => {
+          if (!next.includes(id)) next.push(id);
+        });
+        return next;
+      });
+    }
+  };
+
+  // Clear selection when filters or search change
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [catFilter, subCatFilter, subSubCatFilter, search]);
 
   const load = async ({ append = false } = {}) => {
     if (append) {
@@ -297,6 +326,18 @@ export default function ProductsList() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    try {
+      await deleteProductsBulk(selectedIds);
+      toast.success(`${selectedIds.length} products deleted`);
+      setSelectedIds([]);
+      setShowBulkDeleteConfirm(false);
+      load({ append: false });
+    } catch {
+      toast.error("Bulk delete failed");
+    }
+  };
+
   const normalizeVisibility = (product) => {
     const raw = String(product.visibility || "publish").trim().toLowerCase();
     return raw === "draft" ? "draft" : "publish";
@@ -329,6 +370,15 @@ export default function ProductsList() {
           message="This product will be permanently removed."
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {showBulkDeleteConfirm && (
+        <ConfirmDialog
+          title="Delete Selected Products?"
+          message={`Are you sure you want to permanently delete the ${selectedIds.length} selected product(s)?`}
+          onConfirm={handleBulkDelete}
+          onCancel={() => setShowBulkDeleteConfirm(false)}
         />
       )}
 
@@ -416,6 +466,36 @@ export default function ProductsList() {
           </span>
         </div>
 
+        {selectedIds.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 20px",
+              background: "#fff5f5",
+              borderBottom: "1px solid #fed7d7",
+            }}
+          >
+            <span style={{ fontSize: 14, fontWeight: 600, color: "#e53e3e" }}>
+              {selectedIds.length} product(s) selected
+            </span>
+            <button
+              className="btn btn-danger btn-sm"
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+              onClick={() => setShowBulkDeleteConfirm(true)}
+            >
+              <MdDelete size={18} /> Delete Selected
+            </button>
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => setSelectedIds([])}
+            >
+              Clear Selection
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="spinner-wrap"><div className="spinner" /></div>
         ) : filtered.length === 0 ? (
@@ -428,6 +508,14 @@ export default function ProductsList() {
             <table>
               <thead>
                 <tr>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((p) => selectedIds.includes(p.id))}
+                      onChange={toggleSelectAll}
+                      style={{ cursor: "pointer", width: 16, height: 16 }}
+                    />
+                  </th>
                   <th>#</th>
                   <th>Image</th>
                   <th>Name</th>
@@ -449,6 +537,14 @@ export default function ProductsList() {
                       const isPublished = visibility === "publish";
                       return (
                         <>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(p.id)}
+                        onChange={() => toggleSelect(p.id)}
+                        style={{ cursor: "pointer", width: 16, height: 16 }}
+                      />
+                    </td>
                     <td className="text-muted">{i + 1}</td>
                     <td>
                       {resolveProductThumb(p) ? (
