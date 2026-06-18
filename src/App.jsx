@@ -31,6 +31,8 @@ import ProfilePage from "./pages/profile/ProfilePage";
 import AppSettingsPage from "./pages/settings/AppSettingsPage";
 import ImageResolutionGuidePage from "./pages/settings/ImageResolutionGuidePage";
 import SupportBotPage from "./pages/support-bot/SupportBotPage";
+import ProductSuggestionsList from "./pages/productSuggestions/ProductSuggestionsList";
+import ProductSuggestionForm from "./pages/productSuggestions/ProductSuggestionForm";
 
 export default function App() {
   return (
@@ -62,6 +64,9 @@ export default function App() {
               <Route path="order-details" element={<OrderDetailsPage />} />
               <Route path="order-details/:id" element={<OrderDetailsPage />} />
               <Route path="product-reviews" element={<ProductReviews />} />
+              <Route path="product-suggestions" element={<ProductSuggestionsList />} />
+              <Route path="product-suggestions/add" element={<ProductSuggestionForm />} />
+              <Route path="product-suggestions/edit/:id" element={<ProductSuggestionForm />} />
               <Route path="banners" element={<BannersPage />} />
               <Route path="coupons" element={<CouponsPage />} />
               <Route path="notifications" element={<NotificationsPage />} />
