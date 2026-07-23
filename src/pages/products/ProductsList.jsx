@@ -641,8 +641,8 @@ export default function ProductsList() {
                       </span>
                     </td>
                     <td>
-                      <span className={`badge ${p.stock > 0 || p.stock === undefined ? "badge-green" : "badge-red"}`}>
-                        {p.stock !== undefined ? (p.stock > 0 ? "In Stock" : "Out") : "In Stock"}
+                      <span className={`badge ${p.stock === 0 || p.stock === "0" || p.stockStatus === "out_of_stock" ? "badge-red" : "badge-green"}`}>
+                        {p.stock === 0 || p.stock === "0" || p.stockStatus === "out_of_stock" ? "Out of Stock" : "In Stock"}
                       </span>
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>

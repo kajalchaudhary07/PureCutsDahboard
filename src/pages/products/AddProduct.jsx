@@ -1277,8 +1277,7 @@ export default function AddProduct() {
       }
       skuSet.add(row.sku.trim().toLowerCase());
       if (row.stock === "" || row.stock === null || row.stock === undefined) {
-        toast.error(`Stock is required for ${row.value}`);
-        return false;
+        row.stock = "1";
       }
     }
     return true;
@@ -1439,7 +1438,8 @@ export default function AddProduct() {
         salePrice:     Number(form.salePrice)      || 0,
         rating:        Number(form.rating)         || 0,
         reviews:       Number(form.reviews)        || 0,
-        stock:         form.manageStock ? Number(form.stock) || 0 : 0,
+        stockStatus:   (form.stock === 0 || form.stock === "0") ? "out_of_stock" : "in_stock",
+        stock:         (form.stock === 0 || form.stock === "0") ? 0 : (Number(form.stock) || 1),
         image: primaryImage,
         imageUrl: primaryImage,
         thumbnailUrl: primaryImage,
@@ -1926,13 +1926,22 @@ export default function AddProduct() {
                 <input type="checkbox" checked={form.onSale} onChange={(e) => set("onSale", e.target.checked)} />
                 <MdSell /> On Sale
               </label>
-              <label className="pe-check">
-                <input type="checkbox" checked={form.manageStock} onChange={(e) => set("manageStock", e.target.checked)} />
-                <MdInventory /> Manage Stock
-              </label>
-              {form.manageStock && (
-                <input className="pe-input pe-stock-inline" placeholder="Stock" type="number" min="0" value={form.stock} onChange={(e) => set("stock", e.target.value)} />
-              )}
+              <div className="pe-inline-group" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span className="pe-icon"><MdInventory /></span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Stock:</span>
+                <select
+                  className="pe-input"
+                  style={{ width: "auto", minWidth: 130, padding: "4px 8px", fontSize: 13 }}
+                  value={form.stock === 0 || form.stock === "0" ? "0" : "1"}
+                  onChange={(e) => {
+                    set("stock", e.target.value);
+                    set("manageStock", true);
+                  }}
+                >
+                  <option value="1">In Stock</option>
+                  <option value="0">Out of Stock</option>
+                </select>
+              </div>
             </div>
 
             {furnitureSelected && (
@@ -2256,13 +2265,14 @@ export default function AddProduct() {
                               />
                             </td>
                             <td>
-                              <input
+                              <select
                                 className="pe-input"
-                                type="number"
-                                min="0"
-                                value={row.stock}
+                                value={row.stock === 0 || row.stock === "0" ? "0" : "1"}
                                 onChange={(e) => updateVariantRow(row.variantKey, "stock", e.target.value)}
-                              />
+                              >
+                                <option value="1">In Stock</option>
+                                <option value="0">Out of Stock</option>
+                              </select>
                             </td>
                             <td>
                               <input
